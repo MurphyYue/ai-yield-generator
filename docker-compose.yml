@@ -1,0 +1,22 @@
+services:
+  foundry:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: foundry-dev
+    volumes:
+      # Mount current directory to /app
+      - .:/app
+      # Persist Foundry cache
+      - foundry-cache:/root/.foundry
+    working_dir: /app
+    stdin_open: true
+    tty: true
+    ports:
+      # Expose Anvil default port
+      - "8545:8545"
+    environment:
+      - TERM=xterm-256color
+
+volumes:
+  foundry-cache:
