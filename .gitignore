@@ -1,0 +1,21 @@
+# Foundry build artifacts
+cache/
+out/
+broadcast/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Node modules (for frontend)
+node_modules/
+
+# Environment files (keep .env.example, ignore .env)
+.env.local
+.env.*.local
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
