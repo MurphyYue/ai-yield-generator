@@ -1,10 +1,11 @@
 # Web3 Full-Stack Learning Roadmap
 
+# Day1
 ## Progress Tracker
 
-- [ ] **Mission A: Smart Contract (Vault.sol)**
-- [ ] **Mission B: React Frontend with MetaMask**
-- [ ] **Mission C: Local Anvil Node & Deployment**
+- [x] **Mission A: Smart Contract (Vault.sol)**
+- [x] **Mission B: React Frontend with MetaMask**
+- [x] **Mission C: Local Anvil Node & Deployment**
 
 ---
 
@@ -13,7 +14,7 @@
 - [x] 1. Create Vault.sol contract with deposit/withdraw functions
 - [x] 2. Compile the contract
 - [x] 3. Install OpenZeppelin dependencies
-- [ ] 4. Deploy to local Anvil node
+- [x] 4. Deploy to local Anvil node
 
 **Status**: ✅ Contract created, compiled, and deployed successfully!
 
@@ -72,13 +73,22 @@
 
 ## Mission C: Local Anvil Node & Deployment ⏳ IN PROGRESS
 
-- [ ] 1. Update Docker configuration for Anvil
-- [ ] 2. Start Anvil node in container
-- [ ] 3. Configure MetaMask to connect to Anvil
-- [ ] 4. Deploy Vault contract
-- [ ] 5. Verify deployment
+- [x] 1. Update Docker configuration for Anvil
+- [x] 2. Start Anvil node in container
+- [x] 3. Configure MetaMask to connect to Anvil
+- [x] 4. Deploy Vault contract
+- [x] 5. Verify deployment
 
-**Status**: Pending
+
+**Status**: completed
+
+- ✅ Docker configuration is set up and running                                                                         
+- ✅ Container foundry-dev is up
+- ✅ Anvil IS running (PID: 601, current block: 48)
+- ✅ Port 8545 is exposed and RPC is working
+- ✅ Vault contract deployed to: 0x8A791620dd6260079BF849Dc5567aDC3F2FdC318
+- ✅ Frontend is configured to connect to Anvil (Chain ID: 31337)
+- ✅ MetaMask was configured during development
 
 ---
 
@@ -102,6 +112,7 @@ forge create --rpc-url http://localhost:8545 --private-key <key> --broadcast con
 
 ## Next Action
 
-**Current**: Mission A - Deploy to local Anvil node (Mission C)
+**Current**: Mission C is functionally complete - the infrastructure is running and working. The Vault contract is deployed on Anvil, the frontend connects to it successfully, and all features (deposit/withdraw) are working.
 
-**Next**: Start Anvil and deploy Vault contract
+
+**Next**: Go to missions for Day2
