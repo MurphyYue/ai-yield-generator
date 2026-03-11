@@ -17,20 +17,56 @@
 
 **Status**: ✅ Contract created, compiled, and deployed successfully!
 
-**Deployed Contract Address**: 0x5FbDB2315678afecb367f032d93F642f64180aa3
+**Deployed Contract Address**: 0x8A791620dd6260079BF849Dc5567aDC3F2FdC318 (redeployed)
 
 ---
 
 ## Mission B: React Frontend with MetaMask ⏳ IN PROGRESS
 
-- [ ] 1. Set up Next.js project with Wagmi + Viem
-- [ ] 2. Create wallet connection component
-- [ ] 3. Display ETH/Token balance
-- [ ] 4. Implement deposit function UI
-- [ ] 5. Implement withdraw function UI
-- [ ] 6. Connect to Anvil and test
+### Phase 1: Project Setup
+- [x] 1.1 Create Next.js 16 project
+- [x] 1.2 Install Web3 dependencies
+- [x] 1.3 Configure TailwindCSS (auto-configured)
+- [x] 1.4 Fix version compatibility (wagmi 2.x + RainbowKit)
 
-**Status**: Pending
+### Phase 2: Web3 Configuration ✅
+- [x] 2.1 Setup Wagmi config (lib/wagmi.ts)
+- [x] 2.2 Configure Anvil chain (lib/chains.ts)
+- [x] 2.3 Define Vault contract ABI (lib/vault.ts)
+
+### Phase 3: Core Components ✅
+- [x] 3.1 Root layout with providers (components/Providers.tsx)
+- [x] 3.2 Wallet connect component (components/WalletConnect.tsx)
+
+### Phase 4: Custom Hooks ✅
+- [x] 4.1 useVaultContract hook (hooks/useVaultContract.ts)
+- [x] 4.2 useVaultBalance hook (hooks/useVaultBalance.ts)
+
+### Phase 5: UI Components ✅
+- [x] 5.1 Vault dashboard (components/VaultDashboard.tsx)
+- [x] 5.2 Balance display (components/BalanceDisplay.tsx)
+- [x] 5.3 Deposit panel (components/DepositPanel.tsx)
+- [x] 5.4 Withdraw panel (components/WithdrawPanel.tsx)
+
+### Phase 6: Integration ✅
+- [x] 6.1 Main page setup (app/page.tsx)
+- [x] 6.2 Connect all components
+
+**Status**: Code complete! Using unified hook approach ✅
+
+**Plan Document**: FRONTEND_PLAN.md
+
+**Architecture**: Unified `useVault` hook (simpler, no circular dependencies)
+
+**Working Features**:
+- ✅ Wallet connection
+- ✅ Vault balance updates after transactions
+- ✅ ETH balance updates after transactions (unified hook)
+
+**Learning**:
+- Circular dependencies in React hooks
+- Unified hooks vs separate hooks coordination
+- Data flow and state management
 
 ---
 
