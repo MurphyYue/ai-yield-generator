@@ -115,4 +115,238 @@ forge create --rpc-url http://localhost:8545 --private-key <key> --broadcast con
 **Current**: Mission C is functionally complete - the infrastructure is running and working. The Vault contract is deployed on Anvil, the frontend connects to it successfully, and all features (deposit/withdraw) are working.
 
 
-**Next**: Go to missions for Day2
+**Next**: Day 2 - Asset Standards and AI Intent Engine
+
+---
+
+# Day2
+
+## Day 2: Asset Standards and AI Intent Engine (10-Hour Sprint)
+
+### Overview
+
+Day 2 advances from "CRUD operations" to **architectural governance**. As a FinTech Transition Architect, you'll master not just code, but how to build high-trust systems through **asset standards (ERC20)** and **smart security (simulation execution)**.
+
+---
+
+## Session 1: Protocol Layer Refactoring (09:00 - 11:30, 2.5h)
+
+### Mission D: ERC20 Vault Implementation ✅ COMPLETED
+
+- [x] 1. Implement ERC20-supported `Vault.sol`
+  - [x] Add `depositToken(address token, uint256 amount)` function
+  - [x] Add `withdrawToken(address token, uint256 amount)` function
+  - [x] Add token balance mapping: `mapping(address => mapping(address => uint256))`
+  - [x] Enforce `nonReentrant` on all token operations
+  - [x] Add `getTokenBalance()` view function
+
+- [x] 2. Create MockUSDT (MockERC20) for testing
+  - [x] Deploy `MockERC20.sol` with standard ERC20 interface
+  - [x] Mint initial supply to deployer
+  - [x] Add `mint(address to, uint256 amount)` function for testing
+
+- [x] 3. Configure Foundry for ERC20
+  - [x] Install OpenZeppelin contracts: `forge install OpenZeppelin/openzeppelin-contracts`
+  - [x] Configure `remappings.txt` for clean imports
+  - [x] Update `foundry.toml` with proper paths
+
+- [x] 4. Test ERC20 workflow
+  - [x] Deploy MockUSDT to Anvil
+  - [x] Test `approve()` on MockUSDT
+  - [x] Test `depositToken()` with `transferFrom()`
+  - [x] Verify token balance tracking in Vault
+  - [x] Test `withdrawToken()`
+  - [x] Verify final balance correctness
+
+**Milestone**: ✅ Successfully deposit MockUSDT via `approve` + `transferFrom`
+
+**Implementation Details**:
+- Created `MockERC20.sol` with 6 decimals (matching USDT)
+- Extended `Vault.sol` with ERC20 support using OpenZeppelin's IERC20
+- Added token balance tracking: `mapping(address => mapping(address => uint256))`
+- Deployed MockUSDT: `0x4c5859f0F772848b2D91F1D83E2Fe57935348029`
+- Deployed Vault V2: `0x1291Be112d480055DaFd8a610b7d1e203891C274`
+- All tests passed: approve → deposit (0.5 USDT) → withdraw (0.25 USDT) → balance verified (0.25 USDT)
+
+---
+
+## Session 2: Security Foundation (11:30 - 13:00, 1.5h)
+
+### Mission E: Understanding ERC20 Security
+
+- [ ] 1. Study Approve/TransferFrom pattern
+  - [ ] Understand why ERC20 uses "pull" vs "push" pattern
+  - [ ] Learn about allowance mechanism
+  - [ ] Understand approval race conditions
+
+- [ ] 2. Research `delegatecall` security
+  - [ ] Understand `delegatecall` vs `call` vs `staticcall`
+  - [ ] Learn about storage layout vulnerabilities
+  - [ ] Study proxy pattern security considerations
+
+- [ ] 3. Document security learnings
+  - [ ] Explain why direct `transfer` is unsafe in some contexts
+  - [ ] Document reentrancy protection strategies
+  - [ ] Create security checklist for ERC20 interactions
+
+**Milestone**: Explain why direct `transfer` is unsafe and how approve/transferFrom works
+
+---
+
+## Break (13:00 - 14:00, 1h)
+
+*Lunch and review*
+
+---
+
+## Session 3: AI Intent Layer (14:00 - 16:30, 2.5h)
+
+### Mission F: Dify Agent Integration
+
+- [ ] 1. Setup Dify Agent
+  - [ ] Create Dify account and project
+  - [ ] Configure System Role prompt (JSON-only responses)
+  - [ ] Define intent schema: `{"action": "deposit|withdraw", "amount": number, "token": "ETH|USDT", "token_address": string}`
+  - [ ] Get API credentials
+
+- [ ] 2. Create Next.js API Route
+  - [ ] Create `app/api/chat/route.ts`
+  - [ ] Implement server-side Dify API call
+  - [ ] Add API key protection (server-side only)
+  - [ ] Add error handling and validation
+
+- [ ] 3. Test AI parsing
+  - [ ] Test with natural language: "存入 100 USDT" (Deposit 100 USDT)
+  - [ ] Test with: "withdraw 0.5 ETH"
+  - [ ] Verify JSON response structure
+  - [ ] Add fallback for unrecognized intents
+
+**Milestone**: Input command returns structured JSON with action, amount, token, token_address
+
+---
+
+## Session 4: Frontend Integration (16:30 - 18:30, 2h)
+
+### Mission G: AI Panel Component
+
+- [ ] 1. Create `AIPanel.tsx` component
+  - [ ] Add text input for natural language commands
+  - [ ] Add "Process" button to send to API
+  - [ ] Display parsed intent preview
+  - [ ] Show confidence level if available
+
+- [ ] 2. Integrate with existing forms
+  - [ ] Auto-fill `DepositPanel` from AI response
+  - [ ] Auto-fill `WithdrawPanel` from AI response
+  - [ ] Handle token selection (ETH vs ERC20)
+  - [ ] Add visual feedback for AI processing
+
+- [ ] 3. Add token selector UI
+  - [ ] Create dropdown for token selection (ETH/USDT)
+  - [ ] Display token balances for selected token
+  - [ ] Update `useVault` hook to support ERC20
+
+- [ ] 4. Test end-to-end flow
+  - [ ] Type "deposit 1 USDT"
+  - [ ] Verify form auto-fills
+  - [ ] Execute transaction
+  - [ ] Verify balance updates
+
+**Milestone**: UI automatically recognizes intent and triggers form updates
+
+---
+
+## Break (18:30 - 19:30, 1h)
+
+*Dinner*
+
+---
+
+## Session 5: Simulation Execution (19:30 - 21:00, 1.5h)
+
+### Mission H: Pre-execution Safety Checks
+
+- [ ] 1. Implement `simulateContract` with viem
+  - [ ] Add simulation before `writeContract` calls
+  - [ ] Extract `publicClient` from wagmi config
+  - [ ] Create `simulateTransaction` helper function
+
+- [ ] 2. Add error interception
+  - [ ] Catch simulation errors before wallet signature
+  - [ ] Display user-friendly error messages
+  - [ ] Add specific error types:
+    - "Insufficient balance"
+    - "Insufficient allowance" (for ERC20)
+    - "Contract execution will revert"
+
+- [ ] 3. Test safety mechanisms
+  - [ ] Try to withdraw more than balance → Should block
+  - [ ] Try to deposit without approval → Should block
+  - [ ] Try invalid token address → Should block
+  - [ ] Verify no wallet signature popup for failed simulations
+
+- [ ] 4. Add UI feedback
+  - [ ] Show "Simulating..." state
+  - [ ] Display success checkmark when safe
+  - [ ] Show warning icon when simulation fails
+  - [ ] Add explanation of error to user
+
+**Milestone**: Deliberately input excess amount, frontend successfully intercepts and shows clear error
+
+---
+
+## Day 2 Verification Standards
+
+At the end of Day 2, verify:
+
+1. **Contract Capability**: Your `Vault` can manage both ETH and any ERC20 token balances
+2. **Interaction Capability**: Input "存入 100 USDT" (Deposit 100 USDT), UI completes parsing → form filling → execution
+3. **Defense Capability**: Simulate "insufficient balance" or "not approved" operation, frontend shows clear error instead of chain exceptions
+
+---
+
+## Architecture Principles: Day 2
+
+### 1. ERC20 "Approve + Pull" Pattern
+- **Why**: All DeFi protocols use this pattern
+- **Flow**: User approves Vault → Vault pulls tokens via transferFrom
+- **Security**: Prevents forced token transfers
+
+### 2. Intent Parsing Architecture
+```
+Natural Language → Dify AI → JSON Intent → Frontend Logic → Blockchain Transaction
+```
+
+### 3. Simulation Before Signature
+- **Principle**: `publicClient.simulateContract` uses `eth_call` (no gas, no state change)
+- **Benefit**: Catch errors before wallet signature popup
+- **Implementation**: Always simulate, only show wallet if simulation succeeds
+
+---
+
+## Coach's Tips
+
+### About MockUSDT
+- Don't use real USDT from mainnet
+- Write a simple `MockERC20.sol` in Foundry
+- Deploy to Anvil - this is the standard developer workflow
+
+### About Dify Configuration
+- Set Prompt as `System Role`
+- Specify JSON-only output format
+- Require `token_address` field for frontend identification
+- Test various input phrasings
+
+### About Security
+- Never expose API keys on frontend
+- Always use Next.js API routes for external API calls
+- Validate JSON structure before using
+- Add rate limiting for production
+
+---
+
+## Next Action
+
+**Current**: Starting Day 2 missions
+
+**Recommended Start**: Session 1 - Protocol Layer Refactoring (Mission D)
