@@ -172,24 +172,34 @@ Day 2 advances from "CRUD operations" to **architectural governance**. As a FinT
 
 ## Session 2: Security Foundation (11:30 - 13:00, 1.5h)
 
-### Mission E: Understanding ERC20 Security
+### Mission E: Understanding ERC20 Security ✅ COMPLETED
 
-- [ ] 1. Study Approve/TransferFrom pattern
-  - [ ] Understand why ERC20 uses "pull" vs "push" pattern
-  - [ ] Learn about allowance mechanism
-  - [ ] Understand approval race conditions
+- [x] 1. Study Approve/TransferFrom pattern
+  - [x] Understand why ERC20 uses "pull" vs "push" pattern
+  - [x] Learn about allowance mechanism
+  - [x] Understand approval race conditions
 
-- [ ] 2. Research `delegatecall` security
-  - [ ] Understand `delegatecall` vs `call` vs `staticcall`
-  - [ ] Learn about storage layout vulnerabilities
-  - [ ] Study proxy pattern security considerations
+- [x] 2. Research `delegatecall` security
+  - [x] Understand `delegatecall` vs `call` vs `staticcall`
+  - [x] Learn about storage layout vulnerabilities
+  - [x] Study proxy pattern security considerations
 
-- [ ] 3. Document security learnings
-  - [ ] Explain why direct `transfer` is unsafe in some contexts
-  - [ ] Document reentrancy protection strategies
-  - [ ] Create security checklist for ERC20 interactions
+- [x] 3. Document security learnings
+  - [x] Explain why direct `transfer` is unsafe in some contexts
+  - [x] Document reentrancy protection strategies
+  - [x] Create security checklist for ERC20 interactions
 
-**Milestone**: Explain why direct `transfer` is unsafe and how approve/transferFrom works
+**Milestone**: ✅ Explained why direct `transfer` is unsafe and how approve/transferFrom works
+
+**Key Security Learnings:**
+- **Pull vs Push Pattern**: Pull pattern (approve + transferFrom) is safer than direct transfer
+- **Allowance Mechanism**: Two-step process giving users control and limiting exposure
+- **Reentrancy Protection**: Always use `nonReentrant` modifier on functions with external calls
+- **Checks-Effects-Interactions**: Validate inputs → Update state → Make external calls
+- **Approval Race Conditions**: Use SafeERC20 to prevent race conditions in allowance changes
+- **Frontend Security**: Check allowances, simulate before signing, handle errors gracefully
+
+**Documentation**: SECURITY_FOUNDATION.md created with complete security guide
 
 ---
 
@@ -201,22 +211,39 @@ Day 2 advances from "CRUD operations" to **architectural governance**. As a FinT
 
 ## Session 3: AI Intent Layer (14:00 - 16:30, 2.5h)
 
-### Mission F: Dify Agent Integration
+### Mission F: Dify Agent Integration ✅ COMPLETED
 
-- [ ] 1. Setup Dify Agent
-  - [ ] Create Dify account and project
-  - [ ] Configure System Role prompt (JSON-only responses)
-  - [ ] Define intent schema: `{"action": "deposit|withdraw", "amount": number, "token": "ETH|USDT", "token_address": string}`
-  - [ ] Get API credentials
+- [x] 1. Setup Dify Agent
+  - [x] Create Dify account and project
+  - [x] Configure System Role prompt (JSON-only responses)
+  - [x] Define intent schema: `{"action": "deposit|withdraw", "amount": number, "token": "ETH|USDT", "token_address": string}`
+  - [x] Get API credentials
 
-- [ ] 2. Create Next.js API Route
-  - [ ] Create `app/api/chat/route.ts`
-  - [ ] Implement server-side Dify API call
-  - [ ] Add API key protection (server-side only)
-  - [ ] Add error handling and validation
+- [x] 2. Create Next.js API Route
+  - [x] Create `app/api/chat/route.ts`
+  - [x] Implement server-side Dify API call
+  - [x] Add API key protection (server-side only)
+  - [x] Add error handling and validation
 
-- [ ] 3. Test AI parsing
-  - [ ] Test with natural language: "存入 100 USDT" (Deposit 100 USDT)
+- [x] 3. Test AI parsing
+  - [x] Test with natural language: "存入 100 USDT" (Deposit 100 USDT)
+  - [x] Verify JSON response structure
+  - [x] Add fallback for unrecognized intents
+
+**Milestone**: ✅ Input command returns structured JSON with action, amount, token, token_address
+
+**Implementation Details:**
+- Dify Agent configured with system prompt for JSON-only responses
+- API route at `/api/chat` handles natural language parsing
+- Supports both English and Chinese commands
+- Returns structured intent: `{action, amount, token, token_address, confidence}`
+- Includes error handling and validation
+- Token addresses: ETH (0x0...0), USDT (0x4c58...8029)
+
+**Files Created:**
+- `app/api/chat/route.ts` - Next.js API route for Dify integration
+- `DIFY_INTEGRATION.md` - Complete integration documentation
+- `test-dify-api.sh` - Test script for API endpoint
   - [ ] Test with: "withdraw 0.5 ETH"
   - [ ] Verify JSON response structure
   - [ ] Add fallback for unrecognized intents
