@@ -902,6 +902,167 @@ The development took longer than planned but provided valuable learning about Re
 
 ---
 
-**Last Updated**: 2026-03-11  
-**Actual Implementation Time**: 6.5 hours  
+**Last Updated**: 2026-03-11
+**Actual Implementation Time**: 6.5 hours
 **Over Budget**: 86% (valuable learning experience)
+
+---
+
+## DAY 2: FRONTEND INTEGRATION - AI & ERC20 SUPPORT
+
+### Mission G: AI Intent Parsing & Form Auto-Fill ✅
+
+#### Overview
+Added natural language processing capability using Dify AI, allowing users to type commands like "deposit 1 ETH" or "withdraw 0.5 USDT" to auto-fill forms.
+
+#### Architecture Flow
+```
+User Input → AIPanel → Dify API → Parsed Intent → Forms Auto-Filled
+```
+
+#### Implementation Details
+
+**1. Intent State Management**
+```typescript
+// VaultDashboard.tsx
+const [intent, setIntent] = useState<Intent | null>(null)
+
+const handleIntentParsed = (parsedIntent: Intent) => {
+  setIntent(parsedIntent)
+  // Auto-clear after 30 seconds
+  setTimeout(() => setIntent(null), 30000)
+}
+```
+
+**2. Auto-Fill Logic**
+```typescript
+// DepositPanel.tsx & WithdrawPanel.tsx
+useEffect(() => {
+  if (intent && intent.action === 'deposit' && intent.amount > 0) {
+    setAmount(intent.amount.toString())
+  }
+}, [intent])
+```
+
+**3. Visual Feedback**
+- "AI Parsed" badge appears on relevant panel
+- Shows token and amount being deposited/withdrawn
+- Badge color matches panel type (blue for deposit, purple for withdraw)
+
+#### Files Created/Modified
+
+**Created:**
+- `components/AIPanel.tsx` - Natural language input component
+- `app/api/chat/route.ts` - Dify API integration endpoint
+- `DIFY_INTEGRATION.md` - API documentation
+
+**Modified:**
+- `components/VaultDashboard.tsx` - Added intent state management
+- `components/DepositPanel.tsx` - Added intent prop and auto-fill
+- `components/WithdrawPanel.tsx` - Added intent prop and auto-fill
+
+#### Supported Commands
+
+**English:**
+- `deposit 1 ETH`
+- `withdraw 0.5 USDT`
+- `put 2 ETH into vault`
+- `take out 10 USDT`
+
+**Chinese:**
+- `存入 100 USDT`
+- `提取 1 ETH`
+- `我想存入 5 ETH`
+
+#### Intent Schema
+```typescript
+interface Intent {
+  action: 'deposit' | 'withdraw' | 'unknown'
+  amount: number
+  token: 'ETH' | 'USDT' | 'unknown'
+  token_address: string
+  confidence: 'high' | 'medium' | 'low'
+}
+```
+
+#### Configuration
+
+**Environment Variables:**
+```bash
+NEXT_PUBLIC_DIFY_API_KEY=app-xxxxxxxxxxxxx
+DIFY_API_URL=https://api.dify.ai/v1/chat-messages
+```
+
+**Dify Workflow Prompt:**
+```
+You are an intent parser for a Web3 vault application.
+Convert natural language to JSON format.
+Supported actions: deposit, withdraw
+Supported tokens: ETH, USDT
+Always return valid JSON only.
+```
+
+#### Example Flow
+
+**Input:** "deposit 1.5 ETH"
+
+**AI Parses:**
+```json
+{
+  "action": "deposit",
+  "amount": 1.5,
+  "token": "ETH",
+  "token_address": "0x0000000000000000000000000000000000000000",
+  "confidence": "high"
+}
+```
+
+**Result:**
+- ✅ DepositPanel amount field auto-fills with "1.5"
+- ✅ Blue "AI Parsed" badge appears
+- ✅ Panel shows: "Deposit 1.5 ETH"
+
+#### Status
+✅ **Auto-fill Integration Complete**
+- Intent parsing → Form auto-fill working
+- Visual feedback implemented
+- English and Chinese support verified
+
+⏳ **Token Selector & ERC20 Support Pending**
+- Need to add token selection UI
+- Need to implement ERC20 operations
+
+---
+
+### Next Steps for Day 2
+
+**Mission H: Pre-execution Safety Checks** (19:30 - 21:00)
+- Implement `simulateContract` with viem
+- Add error interception before wallet signature
+- Display user-friendly error messages
+- Add specific error types (insufficient balance, allowance issues)
+
+**Mission G Remaining:**
+- Token selector UI (ETH/USDT dropdown)
+- ERC20 support in useVault hook
+- End-to-end testing with both tokens
+
+---
+
+## DAY 2 PROGRESS SUMMARY
+
+| Session | Mission | Status |
+|---------|---------|--------|
+| 09:00-11:30 | D: ERC20 Vault Implementation | ✅ Complete |
+| 11:30-13:00 | E: Security Foundation | ✅ Complete |
+| 14:00-16:30 | F: AI Intent Layer | ✅ Complete |
+| 16:30-18:30 | G: Frontend Integration | ⏳ 60% Complete |
+| 19:30-21:00 | H: Simulation Execution | ⏳ Pending |
+
+**Overall Day 2 Progress: 70% Complete**
+
+---
+
+**Last Updated**: 2026-03-13
+**Day 2 Status**: In Progress
+**Remaining**: Token selector UI, ERC20 support, Simulation execution

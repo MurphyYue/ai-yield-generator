@@ -1,11 +1,30 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useVault } from '@/hooks/useVault'
 
-export function DepositPanel() {
+interface Intent {
+  action: 'deposit' | 'withdraw' | 'unknown'
+  amount: number
+  token: 'ETH' | 'USDT' | 'unknown'
+  token_address: string
+  confidence: 'high' | 'medium' | 'low'
+}
+
+interface DepositPanelProps {
+  intent?: Intent | null
+}
+
+export function DepositPanel({ intent }: DepositPanelProps) {
   const [amount, setAmount] = useState('')
   const { deposit, isDepositing, isDepositSuccess } = useVault()
+
+  // Auto-fill amount from AI intent
+  useEffect(() => {
+    if (intent && intent.action === 'deposit' && intent.amount > 0) {
+      setAmount(intent.amount.toString())
+    }
+  }, [intent])
 
   const handleDeposit = () => {
     if (!amount || parseFloat(amount) <= 0) return
@@ -14,9 +33,23 @@ export function DepositPanel() {
 
   return (
     <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-lg border border-gray-200 dark:border-gray-700">
-      <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">
-        Deposit ETH
-      </h2>
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-xl font-bold text-gray-900 dark:text-white">
+          Deposit ETH
+        </h2>
+        {intent && intent.action === 'deposit' && (
+          <span className="text-xs px-3 py-1 bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 rounded-full">
+            AI Parsed
+          </span>
+        )}
+      </div>
+
+      {/* Show token info from intent */}
+      {intent && intent.action === 'deposit' && (
+        <div className="mb-3 p-2 bg-amber-50 dark:bg-amber-900/20 rounded-lg text-sm text-gray-600 dark:text-gray-400">
+          Deposit {intent.amount} {intent.token}
+        </div>
+      )}
 
       <input
         type="number"

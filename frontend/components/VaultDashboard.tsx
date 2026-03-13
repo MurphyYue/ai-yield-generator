@@ -1,5 +1,6 @@
 'use client'
 
+import { useState } from 'react'
 import { useAccount } from 'wagmi'
 import { WalletConnect } from './WalletConnect'
 import { BalanceDisplay } from './BalanceDisplay'
@@ -7,8 +8,26 @@ import { DepositPanel } from './DepositPanel'
 import { WithdrawPanel } from './WithdrawPanel'
 import { AIPanel } from './AIPanel'
 
+interface Intent {
+  action: 'deposit' | 'withdraw' | 'unknown'
+  amount: number
+  token: 'ETH' | 'USDT' | 'unknown'
+  token_address: string
+  confidence: 'high' | 'medium' | 'low'
+}
+
 export function VaultDashboard() {
   const { isConnected } = useAccount()
+  const [intent, setIntent] = useState<Intent | null>(null)
+
+  const handleIntentParsed = (parsedIntent: Intent) => {
+    setIntent(parsedIntent)
+
+    // Auto-clear intent after 30 seconds
+    setTimeout(() => {
+      setIntent(null)
+    }, 30000)
+  }
 
   if (!isConnected) {
     return (
@@ -39,12 +58,12 @@ export function VaultDashboard() {
         <BalanceDisplay />
 
         <div className="mt-8">
-          <AIPanel />
+          <AIPanel onIntentParsed={handleIntentParsed} />
         </div>
 
         <div className="grid md:grid-cols-2 gap-8 mt-8">
-          <DepositPanel />
-          <WithdrawPanel />
+          <DepositPanel intent={intent} />
+          <WithdrawPanel intent={intent} />
         </div>
       </main>
     </div>
