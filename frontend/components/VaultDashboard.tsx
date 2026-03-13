@@ -5,6 +5,7 @@ import { WalletConnect } from './WalletConnect'
 import { BalanceDisplay } from './BalanceDisplay'
 import { DepositPanel } from './DepositPanel'
 import { WithdrawPanel } from './WithdrawPanel'
+import { AIPanel } from './AIPanel'
 
 export function VaultDashboard() {
   const { isConnected } = useAccount()
@@ -36,6 +37,10 @@ export function VaultDashboard() {
 
       <main className="max-w-6xl mx-auto">
         <BalanceDisplay />
+
+        <div className="mt-8">
+          <AIPanel />
+        </div>
 
         <div className="grid md:grid-cols-2 gap-8 mt-8">
           <DepositPanel />
