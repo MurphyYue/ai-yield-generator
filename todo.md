@@ -254,7 +254,9 @@ Day 2 advances from "CRUD operations" to **architectural governance**. As a FinT
 
 ## Session 4: Frontend Integration (16:30 - 18:30, 2h)
 
-### Mission G: AI Panel Component ✅ PARTIALLY COMPLETED
+### Mission G: AI Panel Component ✅ COMPLETED
+
+**Detailed Implementation:** See `MISSION_G_COMPLETE.md` for full technical details, ERC20 integration guide, and testing checklist.
 
 - [x] 1. Create `AIPanel.tsx` component
   - [x] Add text input for natural language commands
@@ -268,10 +270,10 @@ Day 2 advances from "CRUD operations" to **architectural governance**. As a FinT
   - [x] Handle token selection (ETH vs ERC20)
   - [x] Add visual feedback for AI processing
 
-- [ ] 3. Add token selector UI
-  - [ ] Create dropdown for token selection (ETH/USDT)
-  - [ ] Display token balances for selected token
-  - [ ] Update `useVault` hook to support ERC20
+- [x] 3. Add token selector UI
+  - [x] Create dropdown for token selection (ETH/USDT)
+  - [x] Display token balances for selected token
+  - [x] Update `useVault` hook to support ERC20
 
 - [ ] 4. Test end-to-end flow
   - [ ] Type "deposit 1 USDT"
@@ -291,12 +293,19 @@ Day 2 advances from "CRUD operations" to **architectural governance**. As a FinT
 - Auto-fill functionality: Intent passed to DepositPanel and WithdrawPanel
 - Visual indicators: "AI Parsed" badge shows when form is auto-filled
 - Intent auto-clears after 30 seconds
+- **NEW**: Token selector UI with ETH/USDT selection
+- **NEW**: ERC20 support in useVault hook (depositToken, withdrawToken, approveUsdt)
+- **NEW**: Allowance tracking and approval flow for USDT
+- **NEW**: Balance display shows both ETH and USDT
 
 **Files Created:**
 - `components/AIPanel.tsx` - AI command interface component
+- `components/TokenSelector.tsx` - Token selection UI component
 - Updated `components/VaultDashboard.tsx` - Added AIPanel to layout and intent state
-- Updated `components/DepositPanel.tsx` - Added intent prop and auto-fill logic
-- Updated `components/WithdrawPanel.tsx` - Added intent prop and auto-fill logic
+- Updated `components/DepositPanel.tsx` - Added token selection and ERC20 support
+- Updated `components/WithdrawPanel.tsx` - Added token selection and ERC20 support
+- Updated `components/BalanceDisplay.tsx` - Shows both ETH and USDT balances
+- Updated `hooks/useVault.ts` - Added ERC20 operations (approve, depositToken, withdrawToken)
 
 ---
 
@@ -391,6 +400,24 @@ Natural Language → Dify AI → JSON Intent → Frontend Logic → Blockchain T
 
 ## Next Action
 
-**Current**: Starting Day 2 missions
+**Current**: Mission G completed - Full ERC20 support with AI-powered natural language interface
 
-**Recommended Start**: Session 1 - Protocol Layer Refactoring (Mission D)
+**Completed Missions:**
+- ✅ Mission D: ERC20 Vault (Protocol Layer)
+- ✅ Mission E: Security Foundation
+- ✅ Mission F: AI Intent Layer (Dify integration)
+- ✅ Mission G: Frontend Integration (AI Panel + ERC20 support)
+
+**Recommended Next**: Mission H - Pre-execution Safety Checks (Simulation Execution)
+
+**Key Achievement:**
+- Users can now type "deposit 100 USDT" or "withdraw 0.5 ETH" in natural language
+- System automatically parses intent, selects correct token, and fills forms
+- Full ERC20 support with approve/transferFrom pattern
+- Allowance tracking and smart approval flow
+
+**Documentation:**
+- `MISSION_G_COMPLETE.md` - Detailed Mission G implementation guide
+- `SECURITY_FOUNDATION.md` - Security patterns and best practices
+- `DIFY_INTEGRATION.md` - AI integration documentation
+- `FRONTEND_PLAN.md` - Complete frontend architecture and day 2 progress

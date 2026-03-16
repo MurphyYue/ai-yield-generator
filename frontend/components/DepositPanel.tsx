@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { useVault } from '@/hooks/useVault'
+import { TokenSelector, TokenType } from './TokenSelector'
 
 interface Intent {
   action: 'deposit' | 'withdraw' | 'unknown'
@@ -17,25 +18,86 @@ interface DepositPanelProps {
 
 export function DepositPanel({ intent }: DepositPanelProps) {
   const [amount, setAmount] = useState('')
-  const { deposit, isDepositing, isDepositSuccess } = useVault()
+  const [selectedToken, setSelectedToken] = useState<TokenType>('ETH')
+  const {
+    deposit,
+    depositUsdt,
+    approveUsdt,
+    isDepositing,
+    isDepositingToken,
+    isApproving,
+    isDepositSuccess,
+    isDepositTokenSuccess,
+    isApproveSuccess,
+    usdtAllowance,
+    usdtAllowanceFormatted,
+    ethBalanceFormatted,
+    usdtBalanceFormatted,
+    vaultBalanceFormatted,
+    vaultUsdtBalanceFormatted,
+  } = useVault()
 
-  // Auto-fill amount from AI intent
+  // Auto-fill from AI intent
   useEffect(() => {
     if (intent && intent.action === 'deposit' && intent.amount > 0) {
       setAmount(intent.amount.toString())
+      if (intent.token === 'ETH' || intent.token === 'USDT') {
+        setSelectedToken(intent.token)
+      }
     }
   }, [intent])
 
   const handleDeposit = () => {
     if (!amount || parseFloat(amount) <= 0) return
-    deposit(amount)
+
+    if (selectedToken === 'ETH') {
+      deposit(amount)
+    } else if (selectedToken === 'USDT') {
+      const amountWei = parseFloat(amount) * 1_000_000 // USDT has 6 decimals
+
+      // Check if allowance is sufficient
+      if (!usdtAllowance || usdtAllowance < amountWei) {
+        // Need to approve first
+        approveUsdt(amount)
+      } else {
+        // Sufficient allowance, deposit directly
+        depositUsdt(amount)
+      }
+    }
   }
+
+  const getMaxAmount = () => {
+    if (selectedToken === 'ETH') {
+      return ethBalanceFormatted
+    } else {
+      return usdtBalanceFormatted
+    }
+  }
+
+  const getAvailableBalance = () => {
+    if (selectedToken === 'ETH') {
+      return ethBalanceFormatted
+    } else {
+      return usdtBalanceFormatted
+    }
+  }
+
+  const getVaultBalance = () => {
+    if (selectedToken === 'ETH') {
+      return vaultBalanceFormatted
+    } else {
+      return vaultUsdtBalanceFormatted
+    }
+  }
+
+  const isLoading = isDepositing || isDepositingToken || isApproving
+  const isSuccess = isDepositSuccess || isDepositTokenSuccess || isApproveSuccess
 
   return (
     <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-lg border border-gray-200 dark:border-gray-700">
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-xl font-bold text-gray-900 dark:text-white">
-          Deposit ETH
+          Deposit {selectedToken}
         </h2>
         {intent && intent.action === 'deposit' && (
           <span className="text-xs px-3 py-1 bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 rounded-full">
@@ -44,34 +106,82 @@ export function DepositPanel({ intent }: DepositPanelProps) {
         )}
       </div>
 
-      {/* Show token info from intent */}
-      {intent && intent.action === 'deposit' && (
+      {/* Token Selector */}
+      <TokenSelector
+        selectedToken={selectedToken}
+        onTokenChange={setSelectedToken}
+        disabled={isLoading}
+      />
+
+      {/* Show AI intent info */}
+      {intent && intent.action === 'deposit' && intent.token !== selectedToken && (
         <div className="mb-3 p-2 bg-amber-50 dark:bg-amber-900/20 rounded-lg text-sm text-gray-600 dark:text-gray-400">
-          Deposit {intent.amount} {intent.token}
+          AI suggested: Deposit {intent.amount} {intent.token}
         </div>
       )}
+
+      {/* USDT Allowance Warning */}
+      {selectedToken === 'USDT' && (
+        <div className="mb-4 p-3 bg-yellow-50 dark:bg-yellow-900/20 rounded-lg">
+          <p className="text-sm text-yellow-800 dark:text-yellow-300">
+            <span className="font-semibold">Allowance:</span> {usdtAllowanceFormatted} USDT approved
+          </p>
+          {parseFloat(amount) > parseFloat(usdtAllowanceFormatted) && (
+            <p className="text-xs text-yellow-700 dark:text-yellow-400 mt-1">
+              ⚠️ Insufficient allowance. Clicking Deposit will approve {amount} USDT first.
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* Balance Display */}
+      <div className="mb-4">
+        <p className="text-sm text-gray-500 dark:text-gray-400">
+          Available:{' '}
+          <span className="font-semibold text-gray-900 dark:text-white">
+            {getAvailableBalance()} {selectedToken}
+          </span>
+        </p>
+        <p className="text-sm text-gray-500 dark:text-gray-400">
+          Vault Balance:{' '}
+          <span className="font-semibold text-gray-900 dark:text-white">
+            {getVaultBalance()} {selectedToken}
+          </span>
+        </p>
+      </div>
 
       <input
         type="number"
         value={amount}
         onChange={(e) => setAmount(e.target.value)}
-        placeholder="Amount in ETH"
-        step="0.0001"
+        placeholder={`Amount in ${selectedToken}`}
+        step="0.000001"
         min="0"
+        max={getMaxAmount()}
         className="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 mb-4"
       />
 
       <button
         onClick={handleDeposit}
-        disabled={isDepositing || !amount || parseFloat(amount) <= 0}
+        disabled={isLoading || !amount || parseFloat(amount) <= 0}
         className="w-full px-6 py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-white font-semibold rounded-lg transition-colors"
       >
-        {isDepositing ? 'Depositing...' : 'Deposit'}
+        {isLoading
+          ? isApproving
+            ? 'Approving...'
+            : 'Depositing...'
+          : selectedToken === 'USDT' && parseFloat(amount) > parseFloat(usdtAllowanceFormatted)
+          ? `Approve & Deposit ${amount} ${selectedToken}`
+          : `Deposit ${amount || '0'} ${selectedToken}`
+        }
       </button>
 
-      {isDepositSuccess && (
+      {isSuccess && (
         <div className="mt-4 p-3 bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300 rounded-lg text-sm">
-          Deposit successful! Your balance has been updated.
+          {isApproveSuccess
+            ? `Approved! You can now deposit ${amount} ${selectedToken}`
+            : `Deposit successful! Your balance has been updated.`
+          }
         </div>
       )}
     </div>
