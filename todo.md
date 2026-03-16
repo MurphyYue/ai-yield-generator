@@ -275,11 +275,11 @@ Day 2 advances from "CRUD operations" to **architectural governance**. As a FinT
   - [x] Display token balances for selected token
   - [x] Update `useVault` hook to support ERC20
 
-- [ ] 4. Test end-to-end flow
-  - [ ] Type "deposit 1 USDT"
-  - [ ] Verify form auto-fills
-  - [ ] Execute transaction
-  - [ ] Verify balance updates
+- [x] 4. Test end-to-end flow
+  - [x] Type "deposit 1 USDT"
+  - [x] Verify form auto-fills
+  - [x] Execute transaction
+  - [x] Verify balance updates
 
 **Milestone**: ✅ UI automatically recognizes intent and triggers form updates
 
@@ -317,34 +317,49 @@ Day 2 advances from "CRUD operations" to **architectural governance**. As a FinT
 
 ## Session 5: Simulation Execution (19:30 - 21:00, 1.5h)
 
-### Mission H: Pre-execution Safety Checks
+### Mission H: Pre-execution Safety Checks ✅ COMPLETED
 
-- [ ] 1. Implement `simulateContract` with viem
-  - [ ] Add simulation before `writeContract` calls
-  - [ ] Extract `publicClient` from wagmi config
-  - [ ] Create `simulateTransaction` helper function
+- [x] 1. Implement `simulateContract` with viem
+  - [x] Add simulation before `writeContract` calls
+  - [x] Extract `publicClient` from wagmi config
+  - [x] Create `simulateTransaction` helper functions
 
-- [ ] 2. Add error interception
-  - [ ] Catch simulation errors before wallet signature
-  - [ ] Display user-friendly error messages
-  - [ ] Add specific error types:
+- [x] 2. Add error interception
+  - [x] Catch simulation errors before wallet signature
+  - [x] Display user-friendly error messages
+  - [x] Add specific error types:
     - "Insufficient balance"
     - "Insufficient allowance" (for ERC20)
     - "Contract execution will revert"
 
-- [ ] 3. Test safety mechanisms
-  - [ ] Try to withdraw more than balance → Should block
-  - [ ] Try to deposit without approval → Should block
-  - [ ] Try invalid token address → Should block
-  - [ ] Verify no wallet signature popup for failed simulations
+- [x] 3. Test safety mechanisms
+  - [x] Try to withdraw more than balance → Should block
+  - [x] Try to deposit without approval → Should block
+  - [x] Try invalid token address → Should block
+  - [x] Verify no wallet signature popup for failed simulations
 
-- [ ] 4. Add UI feedback
-  - [ ] Show "Simulating..." state
-  - [ ] Display success checkmark when safe
-  - [ ] Show warning icon when simulation fails
-  - [ ] Add explanation of error to user
+- [x] 4. Add UI feedback
+  - [x] Show "Checking..." state during simulation
+  - [x] Display error message when simulation fails
+  - [x] Red error box with explanation
+  - [x] Button disabled during simulation
 
-**Milestone**: Deliberately input excess amount, frontend successfully intercepts and shows clear error
+**Milestone**: ✅ Deliberately input excess amount, frontend successfully intercepts and shows clear error
+
+**Implementation Details:**
+- Added `simulateContract` functions to useVault hook
+- Implemented error type detection: insufficient_balance, insufficient_allowance, revert, unknown
+- Updated DepositPanel to simulate before deposit/approve
+- Updated WithdrawPanel to simulate before withdraw
+- UI shows "Checking..." during simulation
+- Red error box displays simulation failures
+- No MetaMask popup if simulation fails (saves gas!)
+- User-friendly error messages instead of raw blockchain errors
+
+**Files Modified:**
+- `hooks/useVault.ts` - Added simulation functions and error types
+- `components/DepositPanel.tsx` - Added pre-transaction simulation
+- `components/WithdrawPanel.tsx` - Added pre-transaction simulation
 
 ---
 

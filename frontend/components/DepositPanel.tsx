@@ -1,7 +1,7 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import { useVault } from '@/hooks/useVault'
+import { useState, useEffect, useCallback } from 'react'
+import { useVault, SimulationError } from '@/hooks/useVault'
 import { TokenSelector, TokenType } from './TokenSelector'
 
 interface Intent {
@@ -19,10 +19,16 @@ interface DepositPanelProps {
 export function DepositPanel({ intent }: DepositPanelProps) {
   const [amount, setAmount] = useState('')
   const [selectedToken, setSelectedToken] = useState<TokenType>('ETH')
+  const [isSimulating, setIsSimulating] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
   const {
     deposit,
     depositUsdt,
     approveUsdt,
+    simulateDeposit,
+    simulateDepositUsdt,
+    simulateApproveUsdt,
     isDepositing,
     isDepositingToken,
     isApproving,
@@ -47,24 +53,62 @@ export function DepositPanel({ intent }: DepositPanelProps) {
     }
   }, [intent])
 
-  const handleDeposit = () => {
+  // Clear error when amount changes
+  useEffect(() => {
+    setError(null)
+  }, [amount, selectedToken])
+
+  const handleDeposit = useCallback(async () => {
     if (!amount || parseFloat(amount) <= 0) return
+    setError(null)
 
     if (selectedToken === 'ETH') {
+      // Simulate first
+      setIsSimulating(true)
+      const simError = await simulateDeposit(amount)
+      setIsSimulating(false)
+
+      if (simError) {
+        setError(simError.message)
+        return
+      }
+
+      // Simulation passed, execute
       deposit(amount)
+
     } else if (selectedToken === 'USDT') {
       const amountWei = parseFloat(amount) * 1_000_000 // USDT has 6 decimals
 
       // Check if allowance is sufficient
       if (!usdtAllowance || usdtAllowance < amountWei) {
-        // Need to approve first
+        // Simulate approval first
+        setIsSimulating(true)
+        const simError = await simulateApproveUsdt(amount)
+        setIsSimulating(false)
+
+        if (simError) {
+          setError(simError.message)
+          return
+        }
+
+        // Simulation passed, approve
         approveUsdt(amount)
       } else {
-        // Sufficient allowance, deposit directly
+        // Simulate deposit first
+        setIsSimulating(true)
+        const simError = await simulateDepositUsdt(amount)
+        setIsSimulating(false)
+
+        if (simError) {
+          setError(simError.message)
+          return
+        }
+
+        // Simulation passed, deposit
         depositUsdt(amount)
       }
     }
-  }
+  }, [amount, selectedToken, simulateDeposit, simulateDepositUsdt, simulateApproveUsdt, usdtAllowance, deposit, depositUsdt, approveUsdt])
 
   const getMaxAmount = () => {
     if (selectedToken === 'ETH') {
@@ -134,6 +178,18 @@ export function DepositPanel({ intent }: DepositPanelProps) {
         </div>
       )}
 
+      {/* Simulation Error Display */}
+      {error && (
+        <div className="mb-4 p-3 bg-red-100 dark:bg-red-900 rounded-lg">
+          <p className="text-sm text-red-800 dark:text-red-300">
+            <span className="font-semibold">⚠️ Simulation Failed:</span> {error}
+          </p>
+          <p className="text-xs text-red-700 dark:text-red-400 mt-1">
+            Please fix the error before proceeding.
+          </p>
+        </div>
+      )}
+
       {/* Balance Display */}
       <div className="mb-4">
         <p className="text-sm text-gray-500 dark:text-gray-400">
@@ -163,10 +219,12 @@ export function DepositPanel({ intent }: DepositPanelProps) {
 
       <button
         onClick={handleDeposit}
-        disabled={isLoading || !amount || parseFloat(amount) <= 0}
+        disabled={isLoading || isSimulating || !amount || parseFloat(amount) <= 0}
         className="w-full px-6 py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-white font-semibold rounded-lg transition-colors"
       >
-        {isLoading
+        {isSimulating
+          ? 'Checking...'
+          : isLoading
           ? isApproving
             ? 'Approving...'
             : 'Depositing...'

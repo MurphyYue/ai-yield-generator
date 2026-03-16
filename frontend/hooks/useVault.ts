@@ -1,12 +1,145 @@
 'use client'
 
-import { useAccount, useReadContract, useWriteContract, useWaitForTransactionReceipt, useBalance } from 'wagmi'
+import { useAccount, useReadContract, useWriteContract, useWaitForTransactionReceipt, useBalance, usePublicClient, useConfig } from 'wagmi'
+import { simulateContract } from '@wagmi/core'
 import { VAULT_ABI, VAULT_ADDRESS, ERC20_ABI, MOCK_USDT_ADDRESS } from '@/lib/vault'
 import { parseEther, formatEther, parseUnits, formatUnits } from 'viem'
-import { useCallback, useEffect } from 'react'
+import { useCallback, useEffect, useState } from 'react'
+
+// Simulation error types
+export interface SimulationError {
+  type: 'insufficient_balance' | 'insufficient_allowance' | 'revert' | 'unknown'
+  message: string
+  shortMessage: string
+}
 
 export function useVault() {
   const { address } = useAccount()
+  const publicClient = usePublicClient()
+  const config = useConfig()
+
+  // Simulation error state
+  const [simulationError, setSimulationError] = useState<SimulationError | null>(null)
+
+  // Helper function to parse simulation errors
+  const parseSimulationError = (error: any): SimulationError => {
+    const message = error?.message || 'Unknown error'
+    const shortMessage = error?.shortMessage || error?.data?.message || message
+
+    // Determine error type
+    const lowerMessage = shortMessage.toLowerCase()
+    if (lowerMessage.includes('insufficient balance')) {
+      return {
+        type: 'insufficient_balance',
+        message: 'Insufficient balance for this transaction',
+        shortMessage
+      }
+    }
+    if (lowerMessage.includes('insufficient allowance')) {
+      return {
+        type: 'insufficient_allowance',
+        message: 'Insufficient allowance. Please approve the token first.',
+        shortMessage
+      }
+    }
+    if (lowerMessage.includes('revert') || lowerMessage.includes('failed')) {
+      return {
+        type: 'revert',
+        message: 'Transaction would fail. Please check your inputs.',
+        shortMessage
+      }
+    }
+    return {
+      type: 'unknown',
+      message: 'Transaction could not be simulated',
+      shortMessage
+    }
+  }
+
+  // Simulate ETH deposit
+  const simulateDeposit = useCallback(async (amount: string) => {
+    if (!address || !config) return null
+    try {
+      await simulateContract(config, {
+        address: VAULT_ADDRESS,
+        abi: VAULT_ABI,
+        functionName: 'deposit',
+        value: parseEther(amount),
+        account: address,
+      })
+      return null
+    } catch (error: any) {
+      return parseSimulationError(error)
+    }
+  }, [address, config])
+
+  // Simulate ETH withdraw
+  const simulateWithdraw = useCallback(async (amount: string) => {
+    if (!address || !config) return null
+    try {
+      await simulateContract(config, {
+        address: VAULT_ADDRESS,
+        abi: VAULT_ABI,
+        functionName: 'withdraw',
+        args: [parseEther(amount)],
+        account: address,
+      })
+      return null
+    } catch (error: any) {
+      return parseSimulationError(error)
+    }
+  }, [address, config])
+
+  // Simulate USDT deposit
+  const simulateDepositUsdt = useCallback(async (amount: string) => {
+    if (!address || !config) return null
+    try {
+      await simulateContract(config, {
+        address: VAULT_ADDRESS,
+        abi: VAULT_ABI,
+        functionName: 'depositToken',
+        args: [MOCK_USDT_ADDRESS, parseUnits(amount, 6)],
+        account: address,
+      })
+      return null
+    } catch (error: any) {
+      return parseSimulationError(error)
+    }
+  }, [address, config])
+
+  // Simulate USDT withdraw
+  const simulateWithdrawUsdt = useCallback(async (amount: string) => {
+    if (!address || !config) return null
+    try {
+      await simulateContract(config, {
+        address: VAULT_ADDRESS,
+        abi: VAULT_ABI,
+        functionName: 'withdrawToken',
+        args: [MOCK_USDT_ADDRESS, parseUnits(amount, 6)],
+        account: address,
+      })
+      return null
+    } catch (error: any) {
+      return parseSimulationError(error)
+    }
+  }, [address, config])
+
+  // Simulate USDT approve
+  const simulateApproveUsdt = useCallback(async (amount: string) => {
+    if (!address || !config) return null
+    try {
+      await simulateContract(config, {
+        address: MOCK_USDT_ADDRESS,
+        abi: ERC20_ABI,
+        functionName: 'approve',
+        args: [VAULT_ADDRESS, parseUnits(amount, 6)],
+        account: address,
+      })
+      return null
+    } catch (error: any) {
+      return parseSimulationError(error)
+    }
+  }, [address, config])
 
   // Read ETH balance
   const { data: ethBalance, refetch: refetchEthBalance } = useBalance({
@@ -245,5 +378,14 @@ export function useVault() {
     approveHash,
     depositTokenHash,
     withdrawTokenHash,
+
+    // Simulation functions
+    simulateDeposit,
+    simulateWithdraw,
+    simulateDepositUsdt,
+    simulateWithdrawUsdt,
+    simulateApproveUsdt,
+    simulationError,
+    setSimulationError,
   }
 }

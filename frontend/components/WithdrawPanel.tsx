@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useVault } from '@/hooks/useVault'
 import { TokenSelector, TokenType } from './TokenSelector'
 
@@ -19,9 +19,14 @@ interface WithdrawPanelProps {
 export function WithdrawPanel({ intent }: WithdrawPanelProps) {
   const [amount, setAmount] = useState('')
   const [selectedToken, setSelectedToken] = useState<TokenType>('ETH')
+  const [isSimulating, setIsSimulating] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
   const {
     withdraw,
     withdrawUsdt,
+    simulateWithdraw,
+    simulateWithdrawUsdt,
     isWithdrawing,
     isWithdrawingToken,
     isWithdrawSuccess,
@@ -42,15 +47,44 @@ export function WithdrawPanel({ intent }: WithdrawPanelProps) {
     }
   }, [intent])
 
-  const handleWithdraw = () => {
+  // Clear error when amount changes
+  useEffect(() => {
+    setError(null)
+  }, [amount, selectedToken])
+
+  const handleWithdraw = useCallback(async () => {
     if (!amount || parseFloat(amount) <= 0) return
+    setError(null)
 
     if (selectedToken === 'ETH') {
+      // Simulate first
+      setIsSimulating(true)
+      const simError = await simulateWithdraw(amount)
+      setIsSimulating(false)
+
+      if (simError) {
+        setError(simError.message)
+        return
+      }
+
+      // Simulation passed, execute
       withdraw(amount)
+
     } else if (selectedToken === 'USDT') {
+      // Simulate first
+      setIsSimulating(true)
+      const simError = await simulateWithdrawUsdt(amount)
+      setIsSimulating(false)
+
+      if (simError) {
+        setError(simError.message)
+        return
+      }
+
+      // Simulation passed, execute
       withdrawUsdt(amount)
     }
-  }
+  }, [amount, selectedToken, simulateWithdraw, simulateWithdrawUsdt, withdraw, withdrawUsdt])
 
   const handleSetMax = () => {
     setAmount(selectedToken === 'ETH' ? vaultBalanceFormatted : vaultUsdtBalanceFormatted)
@@ -110,6 +144,18 @@ export function WithdrawPanel({ intent }: WithdrawPanelProps) {
         </div>
       )}
 
+      {/* Simulation Error Display */}
+      {error && (
+        <div className="mb-4 p-3 bg-red-100 dark:bg-red-900 rounded-lg">
+          <p className="text-sm text-red-800 dark:text-red-300">
+            <span className="font-semibold">⚠️ Simulation Failed:</span> {error}
+          </p>
+          <p className="text-xs text-red-700 dark:text-red-400 mt-1">
+            Please fix the error before proceeding.
+          </p>
+        </div>
+      )}
+
       {/* Balance Display */}
       <div className="mb-4">
         <p className="text-sm text-gray-500 dark:text-gray-400 mb-1">
@@ -148,13 +194,19 @@ export function WithdrawPanel({ intent }: WithdrawPanelProps) {
         onClick={handleWithdraw}
         disabled={
           isLoading ||
+          isSimulating ||
           !amount ||
           parseFloat(amount) <= 0 ||
           parseFloat(amount) > parseFloat(getMaxAmount())
         }
         className="w-full px-6 py-3 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-white font-semibold rounded-lg transition-colors"
       >
-        {isLoading ? 'Withdrawing...' : `Withdraw ${amount || '0'} ${selectedToken}`}
+        {isSimulating
+          ? 'Checking...'
+          : isLoading
+          ? 'Withdrawing...'
+          : `Withdraw ${amount || '0'} ${selectedToken}`
+        }
       </button>
 
       {isSuccess && (
