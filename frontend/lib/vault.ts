@@ -1,6 +1,6 @@
 import { parseAbi } from 'viem'
 
-// Vault Contract ABI (Day 2 - ERC20 Support)
+// VaultV3 Contract ABI (Day 3 - SoD Architecture with AccessControl)
 export const VAULT_ABI = parseAbi([
   // ETH functions
   'function deposit() external payable',
@@ -11,15 +11,42 @@ export const VAULT_ABI = parseAbi([
   'function withdrawToken(address token, uint256 amount) external',
   'function getTokenBalance(address token, address user) external view returns (uint256)',
   'function tokenBalances(address, address) external view returns (uint256)',
+  // Day 3: Role management functions
+  'function grantManagerRole(address account) external',
+  'function grantOperatorRole(address account) external',
+  'function grantTreasurerRole(address account) external',
+  'function hasManagerRole(address account) external view returns (bool)',
+  'function hasOperatorRole(address account) external view returns (bool)',
+  'function hasTreasurerRole(address account) external view returns (bool)',
+  // Day 3: Manager functions
+  'function pause() external',
+  'function unpause() external',
+  'function blacklist(address account) external',
+  'function unblacklist(address account) external',
+  'function blacklisted(address) external view returns (bool)',
+  // Day 3: Treasurer functions
+  'function approveLargeWithdrawal(address user, uint256 amount, bytes32 requestHash) external',
+  'function setWithdrawalFee(uint256 newFee) external',
+  'function setLargeWithdrawalThreshold(uint256 newThreshold) external',
+  'function largeWithdrawalThreshold() external view returns (uint256)',
+  'function withdrawalFee() external view returns (uint256)',
+  'function getWithdrawalRequestHash(address user, uint256 amount) external view returns (bytes32)',
+  'function largeWithdrawalApproved(bytes32) external view returns (bool)',
   // Events
   'event Deposited(address indexed user, uint256 amount)',
-  'event Withdrawn(address indexed user, uint256 amount)',
+  'event Withdrawn(address indexed user, uint256 amount, uint256 fee)',
   'event TokenDeposited(address indexed user, address indexed token, uint256 amount)',
   'event TokenWithdrawn(address indexed user, address indexed token, uint256 amount)',
+  'event Paused(address indexed account)',
+  'event Unpaused(address indexed account)',
+  'event Blacklisted(address indexed account, bool indexed status)',
+  'event LargeWithdrawalApproved(address indexed user, bytes32 indexed requestHash)',
+  'event WithdrawalFeeUpdated(uint256 oldFee, uint256 newFee)',
+  'event ThresholdUpdated(uint256 oldThreshold, uint256 newThreshold)',
 ])
 
-// Contract Addresses
-export const VAULT_ADDRESS = '0x1291Be112d480055DaFd8a610b7d1e203891C274' as const
+// VaultV3 Contract Address (Day 3 - Deployed with SoD Architecture)
+export const VAULT_ADDRESS = '0x8198f5d8F8CfFE8f9C413d98a0A55aEB8ab9FbB7' as const
 
 // MockUSDT (ERC20 Token) ABI
 export const ERC20_ABI = parseAbi([

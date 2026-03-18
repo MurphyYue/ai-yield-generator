@@ -1,0 +1,259 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+// Import OpenZeppelin standard libraries
+import "@openzeppelin/contracts/access/AccessControl.sol";
+import "@openzeppelin/contracts/utils/Pausable.sol";
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+
+/// @title VaultV3 - Multi-Role Governance Vault with SoD (Separation of Duties)
+/// @notice Supports both ETH and ERC20 tokens with role-based access control and emergency pause
+/// @dev SoD Architecture:
+///      - DEFAULT_ADMIN_ROLE (0x00, built-in): Root governance - grant/revoke roles only
+///      - MANAGER_ROLE: Risk control - pause/unpause, blacklist management
+///      - OPERATOR_ROLE: Daily operations - AI automation, routine transactions
+///      - TREASURER_ROLE: Fund management - large withdrawal approvals, fee settings
+contract VaultV3 is AccessControl, Pausable, ReentrancyGuard {
+    // Custom Role Identifiers
+    // Note: DEFAULT_ADMIN_ROLE is built-in (0x00), no need to redefine
+    bytes32 public constant MANAGER_ROLE = keccak256("MANAGER_ROLE");
+    bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
+    bytes32 public constant TREASURER_ROLE = keccak256("TREASURER_ROLE");
+
+    // State variables
+    mapping(address => uint256) public balances; // ETH balances
+    mapping(address => mapping(address => uint256)) public tokenBalances; // ERC20 token balances
+    mapping(address => bool) public blacklisted; // Blacklist for addresses (Manager only)
+
+    // Large withdrawal threshold (in ETH) - requires TREASURER approval
+    uint256 public largeWithdrawalThreshold = 10 ether; // 10 ETH
+    // Large withdrawal requests pending approval
+    mapping(bytes32 => bool) public largeWithdrawalApproved; // requestHash => approved
+
+    // Withdrawal fee (basis points, 100 = 1%)
+    uint256 public withdrawalFee = 0; // 0% by default
+    uint256 public constant MAX_FEE = 1000; // Max 10%
+
+    // Events
+    event Deposited(address indexed user, uint256 amount);
+    event Withdrawn(address indexed user, uint256 amount, uint256 fee);
+    event TokenDeposited(address indexed user, address indexed token, uint256 amount);
+    event TokenWithdrawn(address indexed user, address indexed token, uint256 amount);
+    // Paused/Unpaused events are inherited from Pausable, don't redefine 
+    event Blacklisted(address indexed account, bool indexed status);
+    event LargeWithdrawalRequested(address indexed user, uint256 amount, bytes32 indexed requestHash);
+    event LargeWithdrawalApproved(address indexed user, bytes32 indexed requestHash);
+    event WithdrawalFeeUpdated(uint256 oldFee, uint256 newFee);
+    event ThresholdUpdated(uint256 oldThreshold, uint256 newThreshold);
+    // RoleGranted event is inherited from AccessControl, don't redefine
+
+    /// @notice Constructor - grant all roles to deployer for initial setup
+    constructor() {
+        // Grant DEFAULT_ADMIN_ROLE (built-in, 0x00)
+        _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
+
+        // Grant MANAGER_ROLE (risk control)
+        _grantRole(MANAGER_ROLE, msg.sender);
+
+        // Grant OPERATOR_ROLE (daily operations)
+        _grantRole(OPERATOR_ROLE, msg.sender);
+
+        // Grant TREASURER_ROLE (fund management)
+        _grantRole(TREASURER_ROLE, msg.sender);
+
+        // Note: RoleGranted events are automatically emitted by _grantRole
+    }
+
+    // Receive function for direct ETH transfers
+    receive() external payable {
+        deposit();
+    }
+
+    // ============ ADMIN FUNCTIONS (DEFAULT_ADMIN_ROLE) ============
+
+    /// @notice Grant MANAGER_ROLE to an address (Admin only)
+    function grantManagerRole(address account) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        grantRole(MANAGER_ROLE, account);
+        emit RoleGranted(MANAGER_ROLE, account, msg.sender);
+    }
+
+    /// @notice Grant OPERATOR_ROLE to an address (Admin only)
+    function grantOperatorRole(address account) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        grantRole(OPERATOR_ROLE, account);
+        emit RoleGranted(OPERATOR_ROLE, account, msg.sender);
+    }
+
+    /// @notice Grant TREASURER_ROLE to an address (Admin only)
+    function grantTreasurerRole(address account) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        grantRole(TREASURER_ROLE, account);
+        emit RoleGranted(TREASURER_ROLE, account, msg.sender);
+    }
+
+    /// @notice Revoke any role from an address (Admin only)
+    function revokeRole(bytes32 role, address account) public override onlyRole(DEFAULT_ADMIN_ROLE) {
+        _revokeRole(role, account);
+    }
+
+    // ============ MANAGER FUNCTIONS (MANAGER_ROLE) ============
+
+    /// @notice Pause all deposit and withdraw operations (Manager only)
+    function pause() external onlyRole(MANAGER_ROLE) whenNotPaused {
+        _pause();
+        emit Paused(msg.sender);
+    }
+
+    /// @notice Resume all deposit and withdraw operations (Manager only)
+    function unpause() external onlyRole(MANAGER_ROLE) whenPaused {
+        _unpause();
+        emit Unpaused(msg.sender);
+    }
+
+    /// @notice Add address to blacklist (Manager only)
+    function blacklist(address account) external onlyRole(MANAGER_ROLE) {
+        blacklisted[account] = true;
+        emit Blacklisted(account, true);
+    }
+
+    /// @notice Remove address from blacklist (Manager only)
+    function unblacklist(address account) external onlyRole(MANAGER_ROLE) {
+        blacklisted[account] = false;
+        emit Blacklisted(account, false);
+    }
+
+    // ============ TREASURER FUNCTIONS (TREASURER_ROLE) ============
+
+    /// @notice Approve a large withdrawal request (Treasurer only)
+    /// @param user Address requesting withdrawal
+    /// @param amount Amount to withdraw
+    /// @param requestHash Unique hash identifying the withdrawal request
+    function approveLargeWithdrawal(
+        address user,
+        uint256 amount,
+        bytes32 requestHash
+    ) external onlyRole(TREASURER_ROLE) {
+        largeWithdrawalApproved[requestHash] = true;
+        emit LargeWithdrawalApproved(user, requestHash);
+    }
+
+    /// @notice Set withdrawal fee (Treasurer only)
+    /// @param newFee New fee in basis points (100 = 1%)
+    function setWithdrawalFee(uint256 newFee) external onlyRole(TREASURER_ROLE) {
+        require(newFee <= MAX_FEE, "Fee exceeds maximum");
+        uint256 oldFee = withdrawalFee;
+        withdrawalFee = newFee;
+        emit WithdrawalFeeUpdated(oldFee, newFee);
+    }
+
+    /// @notice Set large withdrawal threshold (Treasurer only)
+    function setLargeWithdrawalThreshold(uint256 newThreshold) external onlyRole(TREASURER_ROLE) {
+        uint256 oldThreshold = largeWithdrawalThreshold;
+        largeWithdrawalThreshold = newThreshold;
+        emit ThresholdUpdated(oldThreshold, newThreshold);
+    }
+
+    // ============ CORE FUNCTIONS (Public, Pausable) ============
+
+    /// @notice Deposit ETH into the vault
+    /// @dev Pausable - can be halted in emergency
+    function deposit() public payable whenNotPaused {
+        require(msg.value > 0, "Amount must be > 0");
+        require(!blacklisted[msg.sender], "Address is blacklisted");
+        balances[msg.sender] += msg.value;
+        emit Deposited(msg.sender, msg.value);
+    }
+
+    /// @notice Withdraw ETH from the vault
+    /// @dev Pausable, NonReentrant, checks blacklist, checks large withdrawal
+    /// @param _amount Amount to withdraw
+    function withdraw(uint256 _amount) external nonReentrant whenNotPaused {
+        require(_amount > 0, "Amount must be > 0");
+        require(balances[msg.sender] >= _amount, "Insufficient balance");
+        require(!blacklisted[msg.sender], "Address is blacklisted");
+
+        // Check if withdrawal requires TREASURER approval
+        if (_amount >= largeWithdrawalThreshold) {
+            bytes32 requestHash = keccak256(abi.encodePacked(msg.sender, _amount, block.timestamp));
+            require(largeWithdrawalApproved[requestHash], "Large withdrawal requires treasurer approval");
+            delete largeWithdrawalApproved[requestHash]; // One-time approval
+        }
+
+        // Calculate fee
+        uint256 fee = 0;
+        if (withdrawalFee > 0) {
+            fee = (_amount * withdrawalFee) / 10000;
+        }
+
+        uint256 amountAfterFee = _amount - fee;
+        balances[msg.sender] -= _amount;
+
+        (bool success, ) = msg.sender.call{value: amountAfterFee}("");
+        require(success, "Transfer failed");
+
+        emit Withdrawn(msg.sender, amountAfterFee, fee);
+    }
+
+    /// @notice Deposit ERC20 tokens into the vault
+    /// @dev Pausable and NonReentrant
+    /// @param token The ERC20 token address
+    /// @param amount The amount of tokens to deposit
+    function depositToken(address token, uint256 amount) external nonReentrant whenNotPaused {
+        require(amount > 0, "Amount must be > 0");
+        require(token != address(0), "Invalid token address");
+        require(!blacklisted[msg.sender], "Address is blacklisted");
+
+        bool success = IERC20(token).transferFrom(msg.sender, address(this), amount);
+        require(success, "Token transfer failed");
+
+        tokenBalances[token][msg.sender] += amount;
+        emit TokenDeposited(msg.sender, token, amount);
+    }
+
+    /// @notice Withdraw ERC20 tokens from the vault
+    /// @dev Pausable and NonReentrant
+    /// @param token The ERC20 token address
+    /// @param amount The amount of tokens to withdraw
+    function withdrawToken(address token, uint256 amount) external nonReentrant whenNotPaused {
+        require(amount > 0, "Amount must be > 0");
+        require(token != address(0), "Invalid token address");
+        require(tokenBalances[token][msg.sender] >= amount, "Insufficient token balance");
+        require(!blacklisted[msg.sender], "Address is blacklisted");
+
+        tokenBalances[token][msg.sender] -= amount;
+
+        bool success = IERC20(token).transfer(msg.sender, amount);
+        require(success, "Token transfer failed");
+
+        emit TokenWithdrawn(msg.sender, token, amount);
+    }
+
+    /// @notice Get user's balance for a specific ERC20 token
+    /// @param token The ERC20 token address
+    /// @param user The user address
+    /// @return The user's balance of the specified token
+    function getTokenBalance(address token, address user) external view returns (uint256) {
+        return tokenBalances[token][user];
+    }
+
+    // ============ VIEW FUNCTIONS ============
+
+    /// @notice Check if an address has MANAGER_ROLE
+    function hasManagerRole(address account) external view returns (bool) {
+        return hasRole(MANAGER_ROLE, account);
+    }
+
+    /// @notice Check if an address has OPERATOR_ROLE
+    function hasOperatorRole(address account) external view returns (bool) {
+        return hasRole(OPERATOR_ROLE, account);
+    }
+
+    /// @notice Check if an address has TREASURER_ROLE
+    function hasTreasurerRole(address account) external view returns (bool) {
+        return hasRole(TREASURER_ROLE, account);
+    }
+
+    /// @notice Generate hash for large withdrawal request
+    function getWithdrawalRequestHash(address user, uint256 amount) external view returns (bytes32) {
+        return keccak256(abi.encodePacked(user, amount, block.timestamp));
+    }
+}

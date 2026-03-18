@@ -256,7 +256,7 @@ Day 2 advances from "CRUD operations" to **architectural governance**. As a FinT
 
 ### Mission G: AI Panel Component ✅ COMPLETED
 
-**Detailed Implementation:** See `MISSION_G_COMPLETE.md` for full technical details, ERC20 integration guide, and testing checklist.
+**Detailed Implementation:** See `./summary-report/MISSION_G_COMPLETE.md` for full technical details, ERC20 integration guide, and testing checklist.
 
 - [x] 1. Create `AIPanel.tsx` component
   - [x] Add text input for natural language commands
@@ -432,7 +432,457 @@ Natural Language → Dify AI → JSON Intent → Frontend Logic → Blockchain T
 - Allowance tracking and smart approval flow
 
 **Documentation:**
-- `MISSION_G_COMPLETE.md` - Detailed Mission G implementation guide
-- `SECURITY_FOUNDATION.md` - Security patterns and best practices
+- `./summary-report/MISSION_G_COMPLETE.md` - Detailed Mission G implementation guide
+- `./summary-report/SECURITY_FOUNDATION.md` - Security patterns and best practices
 - `DIFY_INTEGRATION.md` - AI integration documentation
 - `FRONTEND_PLAN.md` - Complete frontend architecture and day 2 progress
+
+---
+
+# Day3
+
+## Day 3: Advanced Security Governance & Permission Refactoring (10-Hour Sprint)
+
+### Overview
+
+Day 3 evolves from "single-admin mode" to "multi-role permission governance," implementing AI-powered risk control gates. As a FinTech Transition Architect, you'll master **access control**, **circuit breakers**, and **semantic-level risk assessment**.
+
+---
+
+## Session 1: Protocol Layer - Permission Refactoring (09:00 - 11:30, 2.5h)
+
+### Mission I: Access Control Upgrade with SoD Architecture ✅
+
+**Why Upgrade from Ownable to AccessControl?**
+
+In Day 2, you used `Ownable`, but this is dangerous in real FinTech architectures:
+
+- **Ownable**: Only one boss. If the boss's private key is lost, the entire Vault is compromised.
+- **AccessControl**: Supports multiple roles with granular permissions.
+- **SoD (Separation of Duties)**: Banking standard - no single person controls everything.
+
+**Understanding OpenZeppelin AccessControl:**
+
+⚠️ **Critical: DEFAULT_ADMIN_ROLE is Built-In**
+
+```solidity
+// ❌ NEVER redefine DEFAULT_ADMIN_ROLE!
+bytes32 public constant DEFAULT_ADMIN_ROLE = keccak256("DEFAULT_ADMIN_ROLE");
+
+// ✅ CORRECT - DEFAULT_ADMIN_ROLE is built-in (value: 0x00)
+// Just use it directly, no need to define
+
+// ✅ Custom roles MUST use keccak256
+bytes32 public constant MANAGER_ROLE = keccak256("MANAGER_ROLE");
+bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
+bytes32 public constant TREASURER_ROLE = keccak256("TREASURER_ROLE");
+```
+
+**How Role Granting Works:**
+
+- By default, **only the role's admin** can grant/revoke that role
+- **DEFAULT_ADMIN_ROLE** is the default admin for ALL roles
+- Having a role (e.g., OPERATOR_ROLE) doesn't let you grant it to others
+- Only DEFAULT_ADMIN_ROLE members can call `grantRole(OPERATOR_ROLE, account)`
+
+**SoD Architecture for VaultV3:**
+
+| Role | Hash Value | Admin Role | Responsibility | Can Touch Money? | Key Functions |
+|------|-----------|------------|----------------|------------------|---------------|
+| **DEFAULT_ADMIN_ROLE** | `0x00` (built-in) | Self | Root governance | ❌ No | `grantRole()`, `revokeRole()` only |
+| **MANAGER_ROLE** | `keccak256("MANAGER_ROLE")` | DEFAULT_ADMIN_ROLE | Risk control officer | ❌ No | `pause()`, `unpause()`, `blacklist()`, `unblacklist()` |
+| **OPERATOR_ROLE** | `keccak256("OPERATOR_ROLE")` | DEFAULT_ADMIN_ROLE | Daily operator/AI | ✅ Yes (routine) | Daily deposit/withdraw operations |
+| **TREASURER_ROLE** | `keccak256("TREASURER_ROLE")` | DEFAULT_ADMIN_ROLE | Fund officer | ✅ Yes (large amounts) | `approveLargeWithdrawal()`, `setWithdrawalFee()`, `setThreshold()` |
+
+**Implementation Tasks:**
+
+- [x] 1. Import OpenZeppelin libraries
+  - [x] Add `import "@openzeppelin/contracts/access/AccessControl.sol"`
+  - [x] Add `import "@openzeppelin/contracts/utils/Pausable.sol"`
+  - [x] Keep `import "@openzeppelin/contracts/utils/ReentrancyGuard.sol"`
+  - [x] Keep `import "@openzeppelin/contracts/token/ERC20/IERC20.sol"`
+
+- [x] 2. Define custom role identifiers (NOT DEFAULT_ADMIN_ROLE)
+  ```solidity
+  // Custom roles (must define these)
+  bytes32 public constant MANAGER_ROLE = keccak256("MANAGER_ROLE");
+  bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
+  bytes32 public constant TREASURER_ROLE = keccak256("TREASURER_ROLE");
+
+  // DEFAULT_ADMIN_ROLE is built-in (0x00), don't redefine!
+  ```
+
+- [x] 3. Replace `Ownable` with `AccessControl, Pausable`
+  - [x] Remove `import "@openzeppelin/contracts/access/Ownable.sol"`
+  - [x] Change inheritance from `Ownable, ReentrancyGuard` to `AccessControl, Pausable, ReentrancyGuard`
+  - [x] Update constructor:
+    ```solidity
+    constructor() {
+        // DEFAULT_ADMIN_ROLE is built-in, just grant it
+        _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
+
+        // Grant custom roles to deployer for initial setup
+        _grantRole(MANAGER_ROLE, msg.sender);
+        _grantRole(OPERATOR_ROLE, msg.sender);
+        _grantRole(TREASURER_ROLE, msg.sender);
+    }
+    ```
+
+- [x] 4. Implement role-based functions
+  - [x] **DEFAULT_ADMIN functions**:
+    - [x] `grantManagerRole(address account)` - only DEFAULT_ADMIN_ROLE
+    - [x] `grantOperatorRole(address account)` - only DEFAULT_ADMIN_ROLE
+    - [x] `grantTreasurerRole(address account)` - only DEFAULT_ADMIN_ROLE
+    - [x] `revokeRole(bytes32 role, address account)` - only DEFAULT_ADMIN_ROLE
+
+  - [x] **MANAGER functions** (risk control, cannot touch money):
+    - [x] `pause()` - only MANAGER_ROLE, adds `whenNotPaused` modifier
+    - [x] `unpause()` - only MANAGER_ROLE
+    - [x] `blacklist(address account)` - only MANAGER_ROLE
+    - [x] `unblacklist(address account)` - only MANAGER_ROLE
+
+  - [x] **TREASURER functions** (fund management):
+    - [x] `approveLargeWithdrawal(address user, uint256 amount, bytes32 requestHash)` - only TREASURER_ROLE
+    - [x] `setWithdrawalFee(uint256 newFee)` - only TREASURER_ROLE, max 10%
+    - [x] `setLargeWithdrawalThreshold(uint256 newThreshold)` - only TREASURER_ROLE
+
+  - [x] **Public functions** (anyone can use):
+    - [x] `deposit()` - add `whenNotPaused` modifier
+    - [x] `withdraw(uint256 amount)` - add `whenNotPaused` modifier, check blacklist, check large withdrawal
+    - [x] `depositToken(address token, uint256 amount)` - add `whenNotPaused` modifier
+    - [x] `withdrawToken(address token, uint256 amount)` - add `whenNotPaused` modifier
+
+- [x] 5. Add security features
+  - [x] Blacklist mapping: `mapping(address => bool) public blacklisted`
+  - [x] Large withdrawal threshold: `uint256 public largeWithdrawalThreshold = 10 ether`
+  - [x] Withdrawal approval mapping: `mapping(bytes32 => bool) public largeWithdrawalApproved`
+  - [x] Withdrawal fee system: `uint256 public withdrawalFee`, max 10%
+  - [x] Check blacklist in all deposit/withdraw functions
+  - [x] Check large withdrawal threshold and require TREASURER approval
+  - [x] Apply withdrawal fee when applicable
+
+- [x] 6. Add view functions
+  - [x] `hasManagerRole(address account)` - check if has MANAGER_ROLE
+  - [x] `hasOperatorRole(address account)` - check if has OPERATOR_ROLE
+  - [x] `hasTreasurerRole(address account)` - check if has TREASURER_ROLE
+  - [x] `getWithdrawalRequestHash(address user, uint256 amount)` - generate request hash
+
+**Milestone**: ✅ Mission I Complete - Full SoD Architecture Implemented and Tested
+
+- [x] 7. Deploy and test VaultV3
+  - [x] Deploy to Anvil
+  - [x] Test: Non-admin cannot grant roles
+  - [x] Test: Non-manager cannot call `pause()`
+  - [x] Test: Non-treasurer cannot approve large withdrawals
+  - [x] Test: Blacklisted addresses cannot deposit/withdraw
+  - [x] Test: Large withdrawals require treasurer approval
+  - [x] Test: Withdrawal fees work correctly
+  - [x] Test: Pause stops all operations
+  - [x] Test: Role separation works correctly
+  - [x] Foundry tests: 38/38 passed
+
+
+
+**Milestone**: ✅ Non-manager accounts calling `withdraw` with admin privileges are reverted at contract level
+
+**Files to Create:**
+- `contracts/VaultV3.sol` - AccessControl-enabled vault
+- `test/VaultV3.t.sol` - Permission testing suite
+
+**Summary**: See `./summary-report/MISSION_I_COMPLETE.md`.
+
+---
+
+## Session 2: Protocol Layer - Circuit Breaker (11:30 - 13:00, 1.5h)
+
+### Mission J: Pausable Mechanism 
+
+**Implementation Tasks:**
+
+- [x] 1. Add OpenZeppelin `Pausable`
+  - [x] Import `@openzeppelin/contracts/utils/Pausable.sol`
+  - [x] Inherit `Pausable` in contract
+  - [x] Add `whenNotPaused` modifier to:
+    - `deposit()`
+    - `depositToken()`
+    - `withdraw()`
+    - `withdrawToken()`
+
+- [x] 2. Implement pause/resume functions
+  ```solidity
+  function pause() public onlyRole(ADMIN_ROLE) {
+      _pause();
+  }
+
+  function resume() public onlyRole(ADMIN_ROLE) {
+      _unpause();
+  }
+  ```
+
+- [x] 3. Test circuit breaker
+  - [x] Call pause() as admin → Test: testManagerCanPause()
+  - [x] Attempt deposit → Should revert with "EnforcedPause" → Test: testCannotDepositWhenPaused()
+  - [x] Call unpause() as admin → Test: testManagerCanUnpause()
+  - [x] Attempt deposit → Should succeed → Test: testCanDepositAfterUnpause()
+
+- [ ] 4. Integrate with frontend simulation
+  - [ ] Add `pause()`/`unpause()` to useVault hook
+  - [ ] Add UI controls for admin-only operations
+  - [ ] Show "System Paused" banner when paused
+
+**Milestone**:  After calling `pause()`, all `deposit/withdraw` fail simulation with clear error
+
+**Files to Create:**
+- `components/AdminPanel.tsx` - Admin controls for pause/resume
+- Updated `hooks/useVault.ts` - Add pause/resume functions
+
+---
+
+## Break (13:00 - 14:00, 1h)
+
+*Lunch and review*
+
+---
+
+## Session 3: AI Layer - Semantic Risk Control (14:00 - 16:30, 2.5h)
+
+### Mission K: Dify Risk Assessment Engine 
+
+**Objective**: Upgrade Dify Agent to identify "anomalous intents" (e.g., withdrawing 100% of balance at once).
+
+**Implementation Tasks:**
+
+- [ ] 1. Enhance Dify System Role prompt
+  - [ ] Add risk assessment logic:
+    ```
+    Analyze transaction intent for risk factors:
+    - HIGH RISK: Withdraw > 90% of balance
+    - MEDIUM RISK: Withdraw > 50% of balance
+    - LOW RISK: Withdraw < 50% of balance
+    - HIGH RISK: First-time large transaction
+    - MEDIUM RISK: Unusual token combination
+    ```
+  - [ ] Add `risk_level` field to response schema:
+    ```json
+    {
+      "action": "withdraw",
+      "amount": 100,
+      "token": "USDT",
+      "token_address": "0x...",
+      "confidence": "high",
+      "risk_level": "high|medium|low",
+      "risk_reason": "Withdrawing 100% of USDT balance"
+    }
+    ```
+
+- [ ] 2. Update API route schema
+  - [ ] Extend `Intent` interface in `AIPanel.tsx`
+  - [ ] Add `risk_level?: 'high' | 'medium' | 'low'`
+  - [ ] Add `risk_reason?: string`
+
+- [ ] 3. Implement risk-based UI flow
+  - [ ] HIGH RISK: Force double confirmation with warning
+  - [ ] MEDIUM RISK: Show warning but allow single confirmation
+  - [ ] LOW RISK: Normal flow
+
+- [ ] 4. Test risk scenarios
+  - [ ] "取出所有 USDT" → HIGH RISK (withdraw all)
+  - [ ] "withdraw 0.5 ETH" from 1 ETH → MEDIUM RISK (50%)
+  - [ ] "deposit 100 USDT" → LOW RISK (deposit)
+
+**Milestone**:  AI returns `risk_level: "high"` for dangerous operations, frontend enforces double confirmation
+
+**Files to Modify:**
+- `app/api/chat/route.ts` - Update Dify prompt and response handling
+- `components/AIPanel.tsx` - Add risk display and confirmation flow
+- `components/DepositPanel.tsx` - Add risk-based confirmation
+- `components/WithdrawPanel.tsx` - Add risk-based confirmation
+
+---
+
+## Session 4: Frontend Layer - Simulation & Interception (16:30 - 18:30, 2h)
+
+### Mission L: Pre-execution Safety (Already Implemented in Day 2) 
+
+**Status**: Mission H completed simulation infrastructure. Now integrate with new features.
+
+**Enhancement Tasks:**
+
+- [ ] 1. Test pause/resume simulation
+  - [ ] Verify `simulateContract` catches `EnforcedPause` error
+  - [ ] Show user-friendly error: "System is paused. Contact admin."
+
+- [ ] 2. Test role-based access simulation
+  - [ ] Verify `simulateContract` catches missing role errors
+  - [ ] Show user-friendly error: "Insufficient permissions for this operation."
+
+- [ ] 3. Test risk-based confirmation flow
+  - [ ] HIGH RISK: Show warning → Require second confirmation → Simulate
+  - [ ] MEDIUM RISK: Show warning → Single confirmation → Simulate
+  - [ ] LOW RISK: Direct → Simulate
+
+- [ ] 4. Verify no wallet popup on simulation failure
+  - [ ] Test all failure scenarios
+  - [ ] Confirm MetaMask never appears if simulation fails
+
+**Milestone**:  User clicks AI-filled form with insufficient balance, frontend shows error immediately, MetaMask doesn't popup
+
+---
+
+## Break (18:30 - 19:30, 1h)
+
+*Dinner*
+
+---
+
+## Session 5: Architecture Documentation (19:30 - 21:00, 1.5h)
+
+### Mission M: Governance Specification 
+
+**Documentation Tasks:**
+
+- [ ] 1. Update `SECURITY_FOUNDATION.md`
+  - [ ] Add "Access Control" section
+  - [ ] Document role hierarchy:
+    ```
+    DEFAULT_ADMIN_ROLE
+    └── ADMIN_ROLE (pause/resume, grant roles)
+        └── OPERATOR_ROLE (emergency operations)
+    ```
+  - [ ] Add "Circuit Breaker" section
+  - [ ] Document pause/resume workflow
+
+- [ ] 2. Create Role Matrix
+  - [ ] Table mapping roles to permissions
+  - [ ] Document `onlyRole` usage patterns
+  - [ ] Add role management best practices
+
+- [ ] 3. Create Risk Assessment Guide
+  - [ ] Document risk level calculation logic
+  - [ ] Provide examples of risk scenarios
+  - [ ] Document double-confirmation flow
+
+- [ ] 4. Create Day 3 Summary
+  - [ ] `MISSION_I_COMPLETE.md` - AccessControl implementation
+  - [ ] `MISSION_J_COMPLETE.md` - Pausable mechanism
+  - [ ] `MISSION_K_COMPLETE.md` - AI risk control
+  - [ ] `DAY3_COMPLETE.md` - Complete day 3 summary
+
+**Milestone**:  Clear permission role matrix (Role Matrix) produced
+
+**Files to Create:**
+- Updated `SECURITY_FOUNDATION.md`
+- `ROLE_MATRIX.md` - Role permission reference
+- `RISK_ASSESSMENT.md` - Risk control documentation
+- Mission completion markdown files
+
+---
+
+## Day 3 Verification Checklist
+
+At the end of Day 3, verify:
+
+1. **Permission Governance Verification**:
+   - [ ] Switch MetaMask accounts
+   - [ ] Verify only designated "admin account" can execute `pause()` operation
+   - [ ] Verify non-admin accounts receive revert when trying to pause
+
+2. **Simulation Pre-check Verification**:
+   - [ ] Try to deposit without approval
+   - [ ] Frontend captures error via `simulateContract`
+   - [ ] Shows "Please approve first" instead of wallet error
+   - [ ] MetaMask doesn't popup
+
+3. **AI Risk Control Verification**:
+   - [ ] Input "把钱全取了" (withdraw all money)
+   - [ ] AI provides warning instead of direct execution
+   - [ ] High-risk operations require double confirmation
+
+4. **Circuit Breaker Verification**:
+   - [ ] Admin calls `pause()`
+   - [ ] All deposit/withdraw operations fail
+   - [ ] Admin calls `resume()`
+   - [ ] Operations resume normally
+
+---
+
+## Architecture Principles: Day 3
+
+### 1. Principle of Least Privilege
+- **Why**: Minimize blast radius of compromised keys
+- **Implementation**: Use `AccessControl` with granular roles
+- **Benefit**: AI operators can't modify core parameters
+
+### 2. Circuit Breaker Pattern
+- **Principle**: `Pausable` modifier on critical functions
+- **Trigger**: Admin can pause in emergency
+- **Recovery**: Only admin can resume
+- **Frontend**: Show "System Paused" banner
+
+### 3. Semantic Risk Assessment
+```
+User Input → AI Risk Analysis → Risk Score → UI Flow
+  ↓              ↓                   ↓            ↓
+"withdraw all" → 100% withdrawal → HIGH → Double Confirm
+"withdraw 10%" → Normal amount → LOW → Direct Flow
+```
+
+### 4. Simulation Before Signature
+- **Already Implemented**: Mission H (Day 2)
+- **Enhanced**: Add pause/resume and role checking
+- **Always**: Catch errors before wallet popup
+
+---
+
+## Coach's Tips
+
+### About AccessControl
+- Use `keccak256("ROLE_NAME")` for role identifiers
+- `DEFAULT_ADMIN_ROLE` can grant all other roles
+- Test role permissions with multiple accounts
+- Document role hierarchy clearly
+
+### About Risk Assessment
+- Define clear risk thresholds (e.g., >90% = HIGH)
+- Consider transaction history in risk calculation
+- Provide context in risk warnings (not just "high risk")
+- Allow users to proceed after explicit confirmation
+
+### About Circuit Breakers
+- Pause should be fast (single function call)
+- Resume should require admin verification
+- Consider time-based auto-resume (optional)
+- Log all pause/resume events
+
+### About Testing
+- Test with multiple MetaMask accounts
+- Verify role-based access on contract level
+- Test simulation catches all error types
+- Verify no wallet popup on failures
+
+---
+
+## Next Action
+
+**Current**: Day 2 completed with full ERC20 support and AI integration
+
+**Completed Missions:**
+- ✅ Mission D: ERC20 Vault (Protocol Layer)
+- ✅ Mission E: Security Foundation
+- ✅ Mission F: AI Intent Layer (Dify integration)
+- ✅ Mission G: Frontend Integration (AI Panel + ERC20 support)
+- ✅ Mission H: Pre-execution Safety Checks (Simulation)
+
+**Recommended Next**: Mission I - Access Control Upgrade (Day 3, Session 1)
+
+**Key Achievement from Day 2:**
+- Users can type "deposit 100 USDT" or "withdraw 0.5 ETH" in natural language
+- System automatically parses intent, selects correct token, and fills forms
+- Full ERC20 support with approve/transferFrom pattern
+- Pre-execution simulation prevents failed transactions
+
+**Day 3 Goals:**
+- Evolve from single-admin to multi-role governance
+- Implement circuit breaker for emergency control
+- Add AI-powered risk assessment
+- Complete security governance architecture
