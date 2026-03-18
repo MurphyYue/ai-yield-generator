@@ -149,6 +149,16 @@ export function useVault() {
     },
   })
 
+  // Read paused state
+  const { data: isPaused, refetch: refetchPaused } = useReadContract({
+    address: VAULT_ADDRESS,
+    abi: VAULT_ABI,
+    functionName: 'paused',
+    query: {
+      enabled: true,
+    },
+  })
+
   // Read vault ETH balance
   const { data: vaultBalance, refetch: refetchVaultBalance } = useReadContract({
     address: VAULT_ADDRESS,
@@ -326,6 +336,34 @@ export function useVault() {
     [writeWithdrawToken]
   )
 
+  // Pause function (Manager only)
+  const { writeContract: writePause, data: pauseHash } = useWriteContract()
+  const { isLoading: isPausing, isSuccess: isPauseSuccess } = useWaitForTransactionReceipt({
+    hash: pauseHash,
+  })
+
+  const pause = useCallback(() => {
+    writePause({
+      address: VAULT_ADDRESS,
+      abi: VAULT_ABI,
+      functionName: 'pause',
+    })
+  }, [writePause])
+
+  // Unpause function (Manager only)
+  const { writeContract: writeUnpause, data: unpauseHash } = useWriteContract()
+  const { isLoading: isUnpausing, isSuccess: isUnpauseSuccess } = useWaitForTransactionReceipt({
+    hash: unpauseHash,
+  })
+
+  const unpause = useCallback(() => {
+    writeUnpause({
+      address: VAULT_ADDRESS,
+      abi: VAULT_ABI,
+      functionName: 'unpause',
+    })
+  }, [writeUnpause])
+
   return {
     // ETH Balances
     ethBalance: ethBalance?.value ?? BigInt(0),
@@ -387,5 +425,16 @@ export function useVault() {
     simulateApproveUsdt,
     simulationError,
     setSimulationError,
+
+    // Day 3: Admin functions
+    pause,
+    unpause,
+    isPaused: isPaused ?? false,
+    isPausing,
+    isUnpausing,
+    isPauseSuccess,
+    isUnpauseSuccess,
+    pauseHash,
+    unpauseHash,
   }
 }

@@ -2,6 +2,13 @@
 
 import { useVault } from '@/hooks/useVault'
 
+// Format number to exactly 6 decimal places
+function formatToSixDecimals(value: string): string {
+  const num = parseFloat(value)
+  if (isNaN(num)) return '0.000000'
+  return num.toFixed(6)
+}
+
 export function BalanceDisplay() {
   const {
     ethBalanceFormatted,
@@ -18,7 +25,7 @@ export function BalanceDisplay() {
           ETH Balance
         </h3>
         <p className="text-3xl font-bold text-gray-900 dark:text-white">
-          {ethBalanceFormatted} {ethSymbol}
+          {formatToSixDecimals(ethBalanceFormatted)} {ethSymbol}
         </p>
       </div>
 

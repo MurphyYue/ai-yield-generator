@@ -595,7 +595,7 @@ bytes32 public constant TREASURER_ROLE = keccak256("TREASURER_ROLE");
 
 ## Session 2: Protocol Layer - Circuit Breaker (11:30 - 13:00, 1.5h)
 
-### Mission J: Pausable Mechanism 
+### Mission J: Pausable Mechanism ✅
 
 **Implementation Tasks:**
 
@@ -625,16 +625,21 @@ bytes32 public constant TREASURER_ROLE = keccak256("TREASURER_ROLE");
   - [x] Call unpause() as admin → Test: testManagerCanUnpause()
   - [x] Attempt deposit → Should succeed → Test: testCanDepositAfterUnpause()
 
-- [ ] 4. Integrate with frontend simulation
-  - [ ] Add `pause()`/`unpause()` to useVault hook
-  - [ ] Add UI controls for admin-only operations
-  - [ ] Show "System Paused" banner when paused
+- [x] 4. Integrate with frontend simulation
+  - [x] Add `pause()`/`unpause()` to useVault hook
+  - [x] Add UI controls for admin-only operations
+  - [x] Show "System Paused" banner when paused
 
-**Milestone**:  After calling `pause()`, all `deposit/withdraw` fail simulation with clear error
+**Milestone**: ✅ After calling `pause()`, all `deposit/withdraw` fail simulation with clear error
 
-**Files to Create:**
-- `components/AdminPanel.tsx` - Admin controls for pause/resume
-- Updated `hooks/useVault.ts` - Add pause/resume functions
+**Files Created:**
+- [x] `components/AdminPanel.tsx` - Admin controls for pause/resume
+- [x] Updated `hooks/useVault.ts` - Add pause/resume functions
+- [x] `components/SystemPausedBanner.tsx` - Warning banner when paused
+- [x] Updated `components/VaultDashboard.tsx` - Integrated admin controls
+- [x] Updated `lib/vault.ts` - Added `paused()` function to ABI
+
+**Mission J Status**: ✅ **COMPLETE** - Contract implementation + Frontend integration + Testing
 
 ---
 

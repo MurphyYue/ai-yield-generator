@@ -21,6 +21,7 @@ export const VAULT_ABI = parseAbi([
   // Day 3: Manager functions
   'function pause() external',
   'function unpause() external',
+  'function paused() external view returns (bool)',
   'function blacklist(address account) external',
   'function unblacklist(address account) external',
   'function blacklisted(address) external view returns (bool)',

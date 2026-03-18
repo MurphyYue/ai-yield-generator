@@ -7,6 +7,8 @@ import { BalanceDisplay } from './BalanceDisplay'
 import { DepositPanel } from './DepositPanel'
 import { WithdrawPanel } from './WithdrawPanel'
 import { AIPanel } from './AIPanel'
+import { AdminPanel } from './AdminPanel'
+import { SystemPausedBanner } from './SystemPausedBanner'
 
 interface Intent {
   action: 'deposit' | 'withdraw' | 'unknown'
@@ -55,7 +57,16 @@ export function VaultDashboard() {
       </header>
 
       <main className="max-w-6xl mx-auto">
-        <BalanceDisplay />
+        <SystemPausedBanner />
+
+        <div className="grid md:grid-cols-3 gap-8 mb-8">
+          <div className="md:col-span-2">
+            <BalanceDisplay />
+          </div>
+          <div>
+            <AdminPanel />
+          </div>
+        </div>
 
         <div className="mt-8">
           <AIPanel onIntentParsed={handleIntentParsed} />
