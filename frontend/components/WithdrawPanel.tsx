@@ -10,6 +10,9 @@ interface Intent {
   token: 'ETH' | 'USDT' | 'unknown'
   token_address: string
   confidence: 'high' | 'medium' | 'low'
+  risk_level?: 'high' | 'medium' | 'low'
+  risk_reason?: string
+  riskConfirmed?: boolean
 }
 
 interface WithdrawPanelProps {

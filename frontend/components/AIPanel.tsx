@@ -1,14 +1,17 @@
 'use client'
 
 import { useState } from 'react'
+import { useVault } from '@/hooks/useVault'
 
-// Intent types
+// Intent types - amount is always a number (API converts percentage to number)
 interface Intent {
   action: 'deposit' | 'withdraw' | 'unknown'
   amount: number
   token: 'ETH' | 'USDT' | 'unknown'
   token_address: string
   confidence: 'high' | 'medium' | 'low'
+  risk_level?: 'high' | 'medium' | 'low'
+  risk_reason?: string
 }
 
 interface AIPanelProps {
@@ -20,6 +23,11 @@ export function AIPanel({ onIntentParsed }: AIPanelProps) {
   const [isLoading, setIsLoading] = useState(false)
   const [intent, setIntent] = useState<Intent | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [showRiskConfirmation, setShowRiskConfirmation] = useState(false)
+  const [riskConfirmed, setRiskConfirmed] = useState(false)
+
+  // Get vault balances for risk calculation
+  const { vaultBalanceFormatted, vaultUsdtBalanceFormatted } = useVault()
 
   const handleProcess = async () => {
     if (!message.trim()) return
@@ -29,12 +37,19 @@ export function AIPanel({ onIntentParsed }: AIPanelProps) {
     setIntent(null)
 
     try {
+      // Pass vault balances to API for risk calculation
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ message: message.trim() }),
+        body: JSON.stringify({
+          message: message.trim(),
+          vaultBalances: {
+            ETH: parseFloat(vaultBalanceFormatted) || 0,
+            USDT: parseFloat(vaultUsdtBalanceFormatted) || 0,
+          }
+        }),
       })
 
       const data = await response.json()
@@ -43,13 +58,18 @@ export function AIPanel({ onIntentParsed }: AIPanelProps) {
         const parsedIntent = data.intent as Intent
         setIntent(parsedIntent)
 
-        // Notify parent component
+        // Check if HIGH risk and show confirmation modal
+        if (parsedIntent.risk_level === 'high') {
+          setShowRiskConfirmation(true)
+          return // Don't notify parent yet, wait for confirmation
+        }
+
+        // For MEDIUM and LOW risk, notify parent directly
         if (onIntentParsed) {
           onIntentParsed(parsedIntent)
         }
 
         // Show error for unknown intent
-        // TODO - In the future, we can add a feedback loop to improve the model based on user corrections
         if (parsedIntent.action === 'unknown' || parsedIntent.confidence === 'low') {
           setError('Could not understand your command. Please try again with "deposit" or "withdraw".')
         }
@@ -75,6 +95,24 @@ export function AIPanel({ onIntentParsed }: AIPanelProps) {
     setMessage('')
     setIntent(null)
     setError(null)
+    setShowRiskConfirmation(false)
+    setRiskConfirmed(false)
+  }
+
+  // Handle HIGH risk confirmation
+  const handleRiskConfirm = () => {
+    setRiskConfirmed(true)
+    setShowRiskConfirmation(false)
+    // Trigger parent callback with confirmed intent
+    if (intent && onIntentParsed) {
+      onIntentParsed({ ...intent, risk_level: intent.risk_level })
+    }
+  }
+
+  const handleRiskCancel = () => {
+    setShowRiskConfirmation(false)
+    setRiskConfirmed(false)
+    setIntent(null)
   }
 
   const getConfidenceColor = (confidence: string) => {
@@ -101,6 +139,32 @@ export function AIPanel({ onIntentParsed }: AIPanelProps) {
     }
   }
 
+  const getRiskColor = (risk: string | undefined) => {
+    switch (risk) {
+      case 'high':
+        return 'bg-red-100 dark:bg-red-900 text-red-700 dark:text-red-300'
+      case 'medium':
+        return 'bg-yellow-100 dark:bg-yellow-900 text-yellow-700 dark:text-yellow-300'
+      case 'low':
+        return 'bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300'
+      default:
+        return 'bg-gray-100 dark:bg-gray-900 text-gray-700 dark:text-gray-300'
+    }
+  }
+
+  const getRiskIcon = (risk: string | undefined) => {
+    switch (risk) {
+      case 'high':
+        return '⚠️'
+      case 'medium':
+        return '⚡'
+      case 'low':
+        return '✓'
+      default:
+        return '?'
+    }
+  }
+
   return (
     <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-lg border border-gray-200 dark:border-gray-700">
       <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">
@@ -108,7 +172,7 @@ export function AIPanel({ onIntentParsed }: AIPanelProps) {
       </h2>
 
       <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
-        Try: &quot;deposit 1 ETH&quot;, &quot;withdraw 0.5 USDT&quot;, or &quot;存入 100 USDT&quot;
+        Try: &quot;deposit 1 ETH&quot;, &quot;withdraw all USDT&quot;, &quot;取出 50% ETH&quot;
       </p>
 
       {/* Input Section */}
@@ -176,6 +240,20 @@ export function AIPanel({ onIntentParsed }: AIPanelProps) {
                 {intent.confidence.toUpperCase()}
               </span>
             </div>
+
+            {/* Risk Level */}
+            <div className="flex flex-col col-span-2">
+              <span className="text-xs text-gray-500 dark:text-gray-400">Risk Assessment</span>
+              <span className={`inline-flex items-center gap-2 px-3 py-1 rounded-full text-sm font-medium ${getRiskColor(intent.risk_level)}`}>
+                <span>{getRiskIcon(intent.risk_level)}</span>
+                <span>{intent.risk_level?.toUpperCase() || 'LOW'} RISK</span>
+              </span>
+              {intent.risk_reason && (
+                <span className="text-xs text-gray-600 dark:text-gray-400 mt-1">
+                  {intent.risk_reason}
+                </span>
+              )}
+            </div>
           </div>
 
           {/* Token Address (for debugging) */}
@@ -185,6 +263,41 @@ export function AIPanel({ onIntentParsed }: AIPanelProps) {
               {intent.token_address.slice(0, 6)}...{intent.token_address.slice(-4)}
             </span>
           </div>
+
+          {/* HIGH RISK Confirmation Modal */}
+          {intent.risk_level === 'high' && !riskConfirmed && (
+            <div className="mt-4 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
+              <p className="text-sm text-red-800 dark:text-red-300 font-semibold mb-2">
+                ⚠️ High Risk Transaction Detected
+              </p>
+              <p className="text-xs text-red-700 dark:text-red-400 mb-3">
+                {intent.risk_reason || 'This transaction has been flagged as high risk. Please confirm you want to proceed.'}
+              </p>
+              <div className="flex gap-2">
+                <button
+                  onClick={handleRiskConfirm}
+                  className="flex-1 px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-sm font-medium rounded-lg transition-colors"
+                >
+                  Confirm & Continue
+                </button>
+                <button
+                  onClick={handleRiskCancel}
+                  className="flex-1 px-4 py-2 bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-800 dark:text-gray-200 text-sm font-medium rounded-lg transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* MEDIUM RISK Warning */}
+          {intent.risk_level === 'medium' && (
+            <div className="mt-4 p-3 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg">
+              <p className="text-sm text-yellow-800 dark:text-yellow-300">
+                ⚡ <span className="font-semibold">Medium Risk</span>: {intent.risk_reason || 'Please review this transaction carefully.'}
+              </p>
+            </div>
+          )}
         </div>
       )}
 
