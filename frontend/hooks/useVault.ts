@@ -8,7 +8,7 @@ import { useCallback, useEffect, useState } from 'react'
 
 // Simulation error types
 export interface SimulationError {
-  type: 'insufficient_balance' | 'insufficient_allowance' | 'revert' | 'unknown'
+  type: 'insufficient_balance' | 'insufficient_allowance' | 'paused' | 'access_denied' | 'revert' | 'unknown'
   message: string
   shortMessage: string
 }
@@ -28,6 +28,30 @@ export function useVault() {
 
     // Determine error type
     const lowerMessage = shortMessage.toLowerCase()
+
+    // Check for EnforcedPause (Pausable)
+    if (lowerMessage.includes('enforcedpause') || lowerMessage.includes('paused')) {
+      return {
+        type: 'paused',
+        message: 'System is paused. Contact admin to resume operations.',
+        shortMessage
+      }
+    }
+
+    // Check for AccessControl errors
+    if (
+      lowerMessage.includes('accesscontrol') ||
+      lowerMessage.includes('access denied') ||
+      lowerMessage.includes('missing role') ||
+      lowerMessage.includes('access control error')
+    ) {
+      return {
+        type: 'access_denied',
+        message: 'Insufficient permissions for this operation.',
+        shortMessage
+      }
+    }
+
     if (lowerMessage.includes('insufficient balance')) {
       return {
         type: 'insufficient_balance',
