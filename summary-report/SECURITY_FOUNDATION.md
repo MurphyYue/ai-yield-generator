@@ -178,3 +178,174 @@ When building DeFi interfaces:
 Next session: **AI Intent Layer** (14:00 - 16:30)
 - Configure Dify Agent for natural language processing
 - Build API route for intent parsing
+
+---
+
+## Day 3: Access Control & Governance (Extended)
+
+### SoD (Separation of Duties) Pattern
+
+**Why SoD?**
+
+In traditional finance, no single person has complete control over a system. This prevents fraud and mistakes.
+
+**VaultV3 Roles:**
+
+| Role | Hash Value | Admin | Can Touch Money? | Key Functions |
+|------|-----------|-------|------------------|----------------|
+| DEFAULT_ADMIN_ROLE | `0x00` (built-in) | Self | ❌ No | grantRole(), revokeRole() |
+| MANAGER_ROLE | `keccak256("MANAGER_ROLE")` | DEFAULT_ADMIN_ROLE | ❌ No | pause(), unpause(), blacklist() |
+| OPERATOR_ROLE | `keccak256("OPERATOR_ROLE")` | DEFAULT_ADMIN_ROLE | ✅ Yes | Daily deposit/withdraw operations |
+| TREASURER_ROLE | `keccak256("TREASURER_ROLE")` | DEFAULT_ADMIN_ROLE | ✅ Yes | approveLargeWithdrawal(), setWithdrawalFee() |
+
+### AccessControl Hierarchy
+
+```
+DEFAULT_ADMIN_ROLE (0x00)
+├── Can grant/revoke ALL roles
+├── Cannot directly touch funds
+│
+├── MANAGER_ROLE
+│   ├── Can pause/unpause system
+│   ├── Can blacklist addresses
+│   └── Cannot touch funds
+│
+├── OPERATOR_ROLE
+│   ├── Can perform daily operations
+│   └── Cannot modify system parameters
+│
+└── TREASURER_ROLE
+    ├── Can approve large withdrawals
+    └── Can set fees and thresholds
+```
+
+### Important: DEFAULT_ADMIN_ROLE
+
+**NEVER REDEFINE DEFAULT_ADMIN_ROLE!**
+
+```solidity
+// ❌ WRONG - This will break AccessControl!
+bytes32 public constant DEFAULT_ADMIN_ROLE = keccak256("DEFAULT_ADMIN_ROLE");
+
+// ✅ CORRECT - DEFAULT_ADMIN_ROLE is built-in (value: 0x00)
+// Just use it directly
+function grantManagerRole(address account) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    grantRole(MANAGER_ROLE, account);
+}
+```
+
+### Role Checking
+
+```solidity
+// Check if address has role
+function hasManagerRole(address account) external view returns (bool) {
+    return hasRole(MANAGER_ROLE, account);
+}
+```
+
+---
+
+## Day 3: Circuit Breaker (Pausable)
+
+### Why Circuit Breakers?
+
+When bugs or attacks are discovered, you need a way to stop all operations quickly.
+
+### How Pausable Works
+
+```solidity
+import "@openzeppelin/contracts/utils/Pausable.sol";
+
+contract VaultV3 is Pausable {
+    // Apply whenNotPaused modifier
+    function deposit() public payable whenNotPaused {
+        // ... normal logic
+    }
+
+    // Only manager can pause
+    function pause() external onlyRole(MANAGER_ROLE) whenNotPaused {
+        _pause();
+    }
+
+    function unpause() external onlyRole(MANAGER_ROLE) whenPaused {
+        _unpause();
+    }
+}
+```
+
+### Modifier Behavior
+
+| State | `whenNotPaused` | `whenPaused` |
+|-------|-----------------|--------------|
+| Not Paused | ✅ Passes | ❌ Reverts |
+| Paused | ❌ Reverts | ✅ Passes |
+
+### Frontend Integration
+
+```typescript
+// useVault.ts
+const { data: isPaused } = useReadContract({
+    address: VAULT_ADDRESS,
+    abi: VAULT_ABI,
+    functionName: 'paused',
+})
+
+// SystemPausedBanner.tsx - Shows warning when paused
+{isPaused && (
+    <div className="bg-red-600 text-white p-4">
+        System is currently paused. Contact admin.
+    </div>
+)}
+```
+
+---
+
+## Day 3: Multi-Layer Security
+
+### Security Layers
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    FRONTEND LAYER                            │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐  │
+│  │ AI Risk     │  │ Simulation  │  │ User Confirmation   │  │
+│  │ Assessment  │  │ (eth_call)  │  │ (Double confirm)    │  │
+│  └─────────────┘  └─────────────┘  └─────────────────────┘  │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│                   CONTRACT LAYER                             │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐  │
+│  │ AccessControl│  │  Pausable   │  │  ReentrancyGuard   │  │
+│  │ (Roles)     │  │  (Pause)    │  │  (NonReentrant)    │  │
+│  └─────────────┘  └─────────────┘  └─────────────────────┘  │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐  │
+│  │ Blacklist   │  │ Withdrawal  │  │ Balance Checks     │  │
+│  │ Mapping     │  │ Approval    │  │ (CEI Pattern)     │  │
+│  └─────────────┘  └─────────────┘  └─────────────────────┘  │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Defense in Depth
+
+Each layer catches different types of threats:
+
+| Layer | Threat | Example |
+|-------|--------|---------|
+| AI Risk | User mistakes | "withdraw all" → HIGH warning |
+| Simulation | Technical errors | Wrong token address, insufficient balance |
+| User Confirm | Rash decisions | Double confirmation for HIGH risk |
+| AccessControl | Unauthorized actions | Non-manager cannot pause |
+| Pausable | System emergency | All ops stop when paused |
+| ReentrancyGuard | Reentrancy attacks | Prevents recursive calls |
+| Blacklist | Bad actors | Block specific addresses |
+
+---
+
+## Resources
+
+- [OpenZeppelin AccessControl](https://docs.openzeppelin.com/contracts/api/access#AccessControl)
+- [OpenZeppelin Pausable](https://docs.openzeppelin.com/contracts/api/utils#Pausable)
+- [SoD Pattern in Banking](https://en.wikipedia.org/wiki/Separation_of_duties)
+- [VaultV3 Contract](file://../../contracts/VaultV3.sol)
