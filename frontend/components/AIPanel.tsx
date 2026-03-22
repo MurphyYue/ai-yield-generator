@@ -107,7 +107,6 @@ export function AIPanel({ onIntentParsed }: AIPanelProps) {
   }
 
   const handleRiskCancel = () => {
-    setShowRiskConfirmation(false)
     setRiskConfirmed(false)
     setIntent(null)
   }
