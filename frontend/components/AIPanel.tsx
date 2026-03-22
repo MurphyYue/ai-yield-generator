@@ -23,7 +23,6 @@ export function AIPanel({ onIntentParsed }: AIPanelProps) {
   const [isLoading, setIsLoading] = useState(false)
   const [intent, setIntent] = useState<Intent | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [showRiskConfirmation, setShowRiskConfirmation] = useState(false)
   const [riskConfirmed, setRiskConfirmed] = useState(false)
 
   // Get vault balances for risk calculation
@@ -35,6 +34,7 @@ export function AIPanel({ onIntentParsed }: AIPanelProps) {
     setIsLoading(true)
     setError(null)
     setIntent(null)
+    setRiskConfirmed(false)
 
     try {
       // Pass vault balances to API for risk calculation
@@ -58,10 +58,9 @@ export function AIPanel({ onIntentParsed }: AIPanelProps) {
         const parsedIntent = data.intent as Intent
         setIntent(parsedIntent)
 
-        // Check if HIGH risk and show confirmation modal
+        // For HIGH risk, show confirmation modal - don't notify parent yet
         if (parsedIntent.risk_level === 'high') {
-          setShowRiskConfirmation(true)
-          return // Don't notify parent yet, wait for confirmation
+          return // Wait for user confirmation before proceeding
         }
 
         // For MEDIUM and LOW risk, notify parent directly
@@ -95,14 +94,12 @@ export function AIPanel({ onIntentParsed }: AIPanelProps) {
     setMessage('')
     setIntent(null)
     setError(null)
-    setShowRiskConfirmation(false)
     setRiskConfirmed(false)
   }
 
   // Handle HIGH risk confirmation
   const handleRiskConfirm = () => {
     setRiskConfirmed(true)
-    setShowRiskConfirmation(false)
     // Trigger parent callback with confirmed intent
     if (intent && onIntentParsed) {
       onIntentParsed({ ...intent, risk_level: intent.risk_level })
