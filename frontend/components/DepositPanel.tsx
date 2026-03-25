@@ -2,7 +2,10 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { useVault, SimulationError } from '@/hooks/useVault'
+import { usePermitSignature } from '@/hooks/usePermitSignature'
 import { TokenSelector, TokenType } from './TokenSelector'
+import { VAULT_ADDRESS, MOCK_USDT_ADDRESS } from '@/lib/vault'
+import { parseUnits } from 'viem'
 
 interface Intent {
   action: 'deposit' | 'withdraw' | 'unknown'
@@ -24,19 +27,25 @@ export function DepositPanel({ intent }: DepositPanelProps) {
   const [selectedToken, setSelectedToken] = useState<TokenType>('ETH')
   const [isSimulating, setIsSimulating] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [usePermit, setUsePermit] = useState(true) // Try permit first
+
+  const { signPermit } = usePermitSignature()
 
   const {
     deposit,
     depositUsdt,
+    depositUsdtWithPermit,
     approveUsdt,
     simulateDeposit,
     simulateDepositUsdt,
     simulateApproveUsdt,
     isDepositing,
     isDepositingToken,
+    isDepositingWithPermit,
     isApproving,
     isDepositSuccess,
     isDepositTokenSuccess,
+    isDepositWithPermitSuccess,
     isApproveSuccess,
     usdtAllowance,
     usdtAllowanceFormatted,
@@ -82,6 +91,34 @@ export function DepositPanel({ intent }: DepositPanelProps) {
     } else if (selectedToken === 'USDT') {
       const amountWei = parseFloat(amount) * 1_000_000 // USDT has 6 decimals
 
+      // Try ONE-CLICK deposit with permit first
+      if (usePermit) {
+        try {
+          setIsSimulating(true)
+
+          // Generate permit signature (off-chain, no gas)
+          const signature = await signPermit(
+            MOCK_USDT_ADDRESS,
+            VAULT_ADDRESS,
+            parseUnits(amount, 6)
+          )
+
+          setIsSimulating(false)
+
+          if (signature) {
+            // One-step deposit with permit
+            depositUsdtWithPermit(amount, signature)
+            return
+          }
+        } catch (permitError: any) {
+          console.log('Permit failed, falling back to two-step flow:', permitError)
+          setIsSimulating(false)
+          setUsePermit(false) // Disable permit for this transaction
+          // Fall through to two-step flow below
+        }
+      }
+
+      // Fallback: Traditional two-step approve + deposit
       // Check if allowance is sufficient
       if (!usdtAllowance || usdtAllowance < amountWei) {
         // Simulate approval first
@@ -111,7 +148,20 @@ export function DepositPanel({ intent }: DepositPanelProps) {
         depositUsdt(amount)
       }
     }
-  }, [amount, selectedToken, simulateDeposit, simulateDepositUsdt, simulateApproveUsdt, usdtAllowance, deposit, depositUsdt, approveUsdt])
+  }, [
+    amount,
+    selectedToken,
+    usePermit,
+    simulateDeposit,
+    simulateDepositUsdt,
+    simulateApproveUsdt,
+    usdtAllowance,
+    deposit,
+    depositUsdt,
+    depositUsdtWithPermit,
+    approveUsdt,
+    signPermit
+  ])
 
   const getMaxAmount = () => {
     if (selectedToken === 'ETH') {
@@ -137,8 +187,8 @@ export function DepositPanel({ intent }: DepositPanelProps) {
     }
   }
 
-  const isLoading = isDepositing || isDepositingToken || isApproving
-  const isSuccess = isDepositSuccess || isDepositTokenSuccess || isApproveSuccess
+  const isLoading = isDepositing || isDepositingToken || isDepositingWithPermit || isApproving
+  const isSuccess = isDepositSuccess || isDepositTokenSuccess || isDepositWithPermitSuccess || isApproveSuccess
 
   return (
     <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-lg border border-gray-200 dark:border-gray-700">
@@ -169,15 +219,13 @@ export function DepositPanel({ intent }: DepositPanelProps) {
 
       {/* USDT Allowance Warning */}
       {selectedToken === 'USDT' && (
-        <div className="mb-4 p-3 bg-yellow-50 dark:bg-yellow-900/20 rounded-lg">
-          <p className="text-sm text-yellow-800 dark:text-yellow-300">
-            <span className="font-semibold">Allowance:</span> {usdtAllowanceFormatted} USDT approved
+        <div className="mb-4 p-3 bg-green-50 dark:bg-green-900/20 rounded-lg">
+          <p className="text-sm text-green-800 dark:text-green-300">
+            <span className="font-semibold">✨ One-Click Deposit:</span> Gasless signature + single transaction
           </p>
-          {parseFloat(amount) > parseFloat(usdtAllowanceFormatted) && (
-            <p className="text-xs text-yellow-700 dark:text-yellow-400 mt-1">
-              ⚠️ Insufficient allowance. Clicking Deposit will approve {amount} USDT first.
-            </p>
-          )}
+          <p className="text-xs text-green-700 dark:text-green-400 mt-1">
+            Current allowance: {usdtAllowanceFormatted} USDT
+          </p>
         </div>
       )}
 
@@ -231,15 +279,17 @@ export function DepositPanel({ intent }: DepositPanelProps) {
           ? isApproving
             ? 'Approving...'
             : 'Depositing...'
-          : selectedToken === 'USDT' && parseFloat(amount) > parseFloat(usdtAllowanceFormatted)
-          ? `Approve & Deposit ${amount} ${selectedToken}`
+          : selectedToken === 'USDT'
+          ? `One-Click Deposit ${amount || '0'} ${selectedToken}`
           : `Deposit ${amount || '0'} ${selectedToken}`
         }
       </button>
 
       {isSuccess && (
         <div className="mt-4 p-3 bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300 rounded-lg text-sm">
-          {isApproveSuccess
+          {isDepositWithPermitSuccess
+            ? `✨ One-Click deposit successful! Your balance has been updated.`
+            : isApproveSuccess
             ? `Approved! You can now deposit ${amount} ${selectedToken}`
             : `Deposit successful! Your balance has been updated.`
           }

@@ -2,7 +2,7 @@
 
 import { useAccount, useReadContract, useWriteContract, useWaitForTransactionReceipt, useBalance, usePublicClient, useConfig } from 'wagmi'
 import { simulateContract } from '@wagmi/core'
-import { VAULT_ABI, VAULT_ADDRESS, ERC20_ABI, MOCK_USDT_ADDRESS } from '@/lib/vault'
+import { VAULT_ABI, VAULT_ADDRESS, ERC20_PERMIT_ABI, MOCK_USDT_ADDRESS } from '@/lib/vault'
 import { parseEther, formatEther, parseUnits, formatUnits } from 'viem'
 import { useCallback, useEffect, useState } from 'react'
 
@@ -154,7 +154,7 @@ export function useVault() {
     try {
       await simulateContract(config, {
         address: MOCK_USDT_ADDRESS,
-        abi: ERC20_ABI,
+        abi: ERC20_PERMIT_ABI,
         functionName: 'approve',
         args: [VAULT_ADDRESS, parseUnits(amount, 6)],
         account: address,
@@ -195,15 +195,27 @@ export function useVault() {
   })
 
   // Read USDT balance
-  const { data: usdtBalance, refetch: refetchUsdtBalance } = useReadContract({
+  const { data: usdtBalance, refetch: refetchUsdtBalance, error,
+    isLoading,
+    isError } = useReadContract({
     address: MOCK_USDT_ADDRESS,
-    abi: ERC20_ABI,
+    abi: ERC20_PERMIT_ABI,
     functionName: 'balanceOf',
     args: address ? [address] : undefined,
     query: {
       enabled: !!address,
     },
   })
+
+
+  // 这样打印能看到灵魂深处的原因
+  console.log('--- Debug USDT Balance ---');
+  console.log('Address Connected:', address);
+  console.log('Target Contract:', MOCK_USDT_ADDRESS);
+  console.log('Is Loading:', isLoading);
+  console.log('Is Error:', isError);
+  console.log('Error Details:', error);
+  console.log('Final Data:', usdtBalance);
 
   // Read vault USDT balance
   const { data: vaultUsdtBalance, refetch: refetchVaultUsdtBalance } = useReadContract({
@@ -219,7 +231,7 @@ export function useVault() {
   // Read USDT allowance
   const { data: usdtAllowance, refetch: refetchUsdtAllowance } = useReadContract({
     address: MOCK_USDT_ADDRESS,
-    abi: ERC20_ABI,
+    abi: ERC20_PERMIT_ABI,
     functionName: 'allowance',
     args: address ? [address, VAULT_ADDRESS] : undefined,
     query: {
@@ -262,33 +274,6 @@ export function useVault() {
       hash: withdrawTokenHash,
     })
 
-  // Auto-refetch all balances after successful transactions
-  useEffect(() => {
-    if (isDepositSuccess || isWithdrawSuccess) {
-      setTimeout(() => {
-        refetchEthBalance()
-        refetchVaultBalance()
-      }, 1000)
-    }
-    if (isDepositTokenSuccess || isWithdrawTokenSuccess || isApproveSuccess) {
-      setTimeout(() => {
-        refetchUsdtBalance()
-        refetchVaultUsdtBalance()
-        refetchUsdtAllowance()
-      }, 1000)
-    }
-  }, [
-    isDepositSuccess,
-    isWithdrawSuccess,
-    isDepositTokenSuccess,
-    isWithdrawTokenSuccess,
-    isApproveSuccess,
-    refetchEthBalance,
-    refetchVaultBalance,
-    refetchUsdtBalance,
-    refetchVaultUsdtBalance,
-    refetchUsdtAllowance,
-  ])
 
   // ETH Deposit function
   const deposit = useCallback(
@@ -324,7 +309,7 @@ export function useVault() {
       if (!amount || parseFloat(amount) <= 0) return
       writeApprove({
         address: MOCK_USDT_ADDRESS,
-        abi: ERC20_ABI,
+        abi: ERC20_PERMIT_ABI,
         functionName: 'approve',
         args: [VAULT_ADDRESS, parseUnits(amount, 6)], // USDT has 6 decimals
       })
@@ -344,6 +329,37 @@ export function useVault() {
       })
     },
     [writeDepositToken]
+  )
+
+  // Write contract - USDT Deposit with Permit
+  const { writeContract: writeDepositWithPermit, data: depositWithPermitHash } = useWriteContract()
+  const { isLoading: isDepositingWithPermit, isSuccess: isDepositWithPermitSuccess } =
+    useWaitForTransactionReceipt({
+      hash: depositWithPermitHash,
+    })
+
+  // USDT Deposit with Permit function (one-step approval+deposit)
+  const depositUsdtWithPermit = useCallback(
+    (amount: string, signature: { v: number; r: `0x${string}`; s: `0x${string}`; deadline: bigint }) => {
+      if (!amount || parseFloat(amount) <= 0) return
+      if (!address) return
+
+      writeDepositWithPermit({
+        address: VAULT_ADDRESS,
+        abi: VAULT_ABI,
+        functionName: 'depositWithPermit',
+        args: [
+          MOCK_USDT_ADDRESS,
+          parseUnits(amount, 6),
+          address, // owner
+          signature.deadline,
+          signature.v,
+          signature.r,
+          signature.s,
+        ],
+      })
+    },
+    [writeDepositWithPermit, address]
   )
 
   // USDT Withdraw function
@@ -380,6 +396,35 @@ export function useVault() {
     hash: unpauseHash,
   })
 
+  // Auto-refetch all balances after successful transactions
+  useEffect(() => {
+    if (isDepositSuccess || isWithdrawSuccess) {
+      setTimeout(() => {
+        refetchEthBalance()
+        refetchVaultBalance()
+      }, 1000)
+    }
+    if (isDepositTokenSuccess || isWithdrawTokenSuccess || isApproveSuccess || isDepositWithPermitSuccess) {
+      setTimeout(() => {
+        refetchUsdtBalance()
+        refetchVaultUsdtBalance()
+        refetchUsdtAllowance()
+      }, 1000)
+    }
+  }, [
+    isDepositSuccess,
+    isWithdrawSuccess,
+    isDepositTokenSuccess,
+    isWithdrawTokenSuccess,
+    isApproveSuccess,
+    isDepositWithPermitSuccess,
+    refetchEthBalance,
+    refetchVaultBalance,
+    refetchUsdtBalance,
+    refetchVaultUsdtBalance,
+    refetchUsdtAllowance,
+  ])
+
   const unpause = useCallback(() => {
     writeUnpause({
       address: VAULT_ADDRESS,
@@ -414,6 +459,7 @@ export function useVault() {
     // USDT Actions
     approveUsdt,
     depositUsdt,
+    depositUsdtWithPermit,
     withdrawUsdt,
 
     // ETH Loading states
@@ -423,6 +469,7 @@ export function useVault() {
     // USDT Loading states
     isApproving,
     isDepositingToken,
+    isDepositingWithPermit,
     isWithdrawingToken,
 
     // ETH Transaction success
@@ -432,6 +479,7 @@ export function useVault() {
     // USDT Transaction success
     isApproveSuccess,
     isDepositTokenSuccess,
+    isDepositWithPermitSuccess,
     isWithdrawTokenSuccess,
 
     // Transaction hashes
@@ -439,6 +487,7 @@ export function useVault() {
     withdrawHash,
     approveHash,
     depositTokenHash,
+    depositWithPermitHash,
     withdrawTokenHash,
 
     // Simulation functions

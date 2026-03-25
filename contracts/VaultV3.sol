@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.24;
 
 // Import OpenZeppelin standard libraries
 import "@openzeppelin/contracts/access/AccessControl.sol";
 import "@openzeppelin/contracts/utils/Pausable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Permit.sol";
 
 /// @title VaultV3 - Multi-Role Governance Vault with SoD (Separation of Duties)
 /// @notice Supports both ETH and ERC20 tokens with role-based access control and emergency pause
@@ -207,6 +208,41 @@ contract VaultV3 is AccessControl, Pausable, ReentrancyGuard {
 
         tokenBalances[token][msg.sender] += amount;
         emit TokenDeposited(msg.sender, token, amount);
+    }
+
+    /// @notice Deposit ERC20 tokens with EIP-2612 permit (one-step approval+deposit)
+    /// @dev Pausable and NonReentrant. Uses off-chain permit signature for gasless approval.
+    /// @param token The ERC20 token address
+    /// @param amount The amount of tokens to deposit
+    /// @param owner The owner of the tokens (signer)
+    /// @param deadline The deadline for the permit signature
+    /// @param v The v component of the permit signature
+    /// @param r The r component of the permit signature
+    /// @param s The s component of the permit signature
+    function depositWithPermit(
+        address token,
+        uint256 amount,
+        address owner,
+        uint256 deadline,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) external nonReentrant whenNotPaused {
+        require(amount > 0, "Amount must be > 0");
+        require(token != address(0), "Invalid token address");
+        require(!blacklisted[owner], "Address is blacklisted");
+        require(block.timestamp <= deadline, "Permit expired");
+
+        // Execute permit (approves vault to spend tokens via signature)
+        IERC20Permit(token).permit(owner, address(this), amount, deadline, v, r, s);
+
+        // Transfer tokens from user to vault (now that we have approval)
+        bool success = IERC20(token).transferFrom(owner, address(this), amount);
+        require(success, "Token transfer failed");
+
+        // Update balance
+        tokenBalances[token][owner] += amount;
+        emit TokenDeposited(owner, token, amount);
     }
 
     /// @notice Withdraw ERC20 tokens from the vault

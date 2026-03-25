@@ -146,3 +146,125 @@ How Contract Addresses Work
   - But you don't know them until after deployment
   - Always save your deployment addresses!
   - Use deployment scripts to automate address capture
+
+  Deployment Problem Analysis & Solution                                                           
+                                                                                                   
+  Problem 1: Solidity Version Mismatch                                                             
+                  
+  Error:                                                                                           
+  Error: Encountered invalid solc version in ERC20Permit.sol:
+  No solc version exists that matches the version requirement: ^0.8.24
+
+  Cause: OpenZeppelin's ERC20Permit requires Solidity ^0.8.24, but our contracts were using
+  ^0.8.20.
+
+  Solution: Updated all files to ^0.8.24:
+  # foundry.toml
+  solc_version = "0.8.24"
+
+  # contracts/MockERC20.sol
+  pragma solidity ^0.8.24;
+
+  # contracts/VaultV3.sol
+  pragma solidity ^0.8.24;
+
+  ---
+  Problem 2: forge create Private Key Not Working
+
+  Error:
+  Error: Error accessing local wallet.
+  Did you pass a keystore, hardware wallet, private key or mnemonic?
+
+  Commands That Failed:
+
+  ┌───────────────────────────────────────────┬───────────┐
+  │                  Command                  │  Result   │
+  ├───────────────────────────────────────────┼───────────┤
+  │ --private-key 0xac09...                   │ ❌ Failed │
+  ├───────────────────────────────────────────┼───────────┤
+  │ --private-key ac09... (no 0x)             │ ❌ Failed │
+  ├───────────────────────────────────────────┼───────────┤
+  │ --private-key "ac09..." (quoted)          │ ❌ Failed │
+  ├───────────────────────────────────────────┼───────────┤
+  │ --from 0xf39F... --unlocked               │ ❌ Failed │
+  ├───────────────────────────────────────────┼───────────┤
+  │ Environment variables (ETH_PRIKEY)        │ ❌ Failed │
+  ├───────────────────────────────────────────┼───────────┤
+  │ --mnemonic-path with process substitution │ ❌ Failed │
+  └───────────────────────────────────────────┴───────────┘
+
+  ---
+  Solution: Use forge script Instead
+
+  Why it worked: forge script is the modern recommended approach in Foundry 1.5+. It properly
+  handles private keys through environment variables.
+
+  Working Solution:
+
+  # 1. Create deployment script
+  # script/DeployPermit.s.sol
+  PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 \
+  forge script script/DeployPermit.s.sol:DeployPermitScript \
+    --rpc-url http://localhost:8545 \
+    --broadcast
+
+  Key Differences:
+
+  ┌────────────────────────────────┬──────────────────────────────────────────┐
+  │          forge create          │               forge script               │
+  ├────────────────────────────────┼──────────────────────────────────────────┤
+  │ Direct deployment              │ Script-based deployment                  │
+  ├────────────────────────────────┼──────────────────────────────────────────┤
+  │ --private-key flag often buggy │ vm.envUint("PRIVATE_KEY") works reliably │
+  ├────────────────────────────────┼──────────────────────────────────────────┤
+  │ No logging by default          │ console.log() support                    │
+  ├────────────────────────────────┼──────────────────────────────────────────┤
+  │ Manual address tracking        │ Addresses logged automatically           │
+  └────────────────────────────────┴──────────────────────────────────────────┘
+
+  ---
+  The Script That Worked
+
+  // SPDX-License-Identifier: MIT
+  pragma solidity ^0.8.24;
+
+  import "forge-std/Script.sol";
+  import "forge-std/console.sol";
+  import "../contracts/MockERC20.sol";
+  import "../contracts/VaultV3.sol";
+
+  contract DeployPermitScript is Script {
+      function run() external {
+          uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
+          vm.startBroadcast(deployerPrivateKey);
+
+          MockERC20 mockUsdt = new MockERC20(1000000000000);
+          console.log("MockERC20 deployed at:", address(mockUsdt));
+
+          VaultV3 vault = new VaultV3();
+          console.log("VaultV3 deployed at:", address(vault));
+
+          vm.stopBroadcast();
+      }
+  }
+
+  ---
+  Key Takeaways
+
+  1. Use forge script for deployments (it's the recommended approach)
+  2. Pass private key via environment variable, not command-line flag
+  3. Update Solidity version to match OpenZeppelin requirements
+  4. Use --broadcast flag to execute the transaction
+
+  ---
+  Commands to Remember
+
+  # Deploy with forge script
+  PRIVATE_KEY=your_private_key \
+  forge script script/YourScript.s.sol:YourScript \
+    --rpc-url http://localhost:8545 \
+    --broadcast
+
+  # Verify deployment
+  cast call CONTRACT_ADDRESS "functionName(args)" --rpc-url http://localhost:8545
+  
