@@ -1003,7 +1003,7 @@ EIP-2612 Solution:
 
 ## Session 2: Protocol Layer - Strategy Pattern (11:30 - 14:00, 2.5h)
 
-### Mission O: Robust Aave Strategy Architecture (Strategy Pattern)
+### Mission O: Robust Aave Strategy Architecture (Strategy Pattern) ✅ COMPLETED
 
 **Why Strategy Pattern?**
 
@@ -1036,9 +1036,9 @@ Vault.divest() → Strategy.withdraw() → AavePool.withdraw()
 
 **Implementation Tasks:**
 
-- [ ] 1. Create IStrategy.sol interface
-  - [ ] Create `contracts/IStrategy.sol`
-  - [ ] Define interface:
+- [x] 1. Create IStrategy.sol interface
+  - [x] Create `contracts/IStrategy.sol`
+  - [x] Define interface:
     ```solidity
     interface IStrategy {
         function deposit(uint256 amount) external returns (bool success);
@@ -1048,78 +1048,78 @@ Vault.divest() → Strategy.withdraw() → AavePool.withdraw()
         function emergencyWithdraw() external returns (bool success);
     }
     ```
-  - [ ] Add events: `Deposited`, `Withdrawn`, `EmergencyWithdrawn`
+  - [x] Add events: `Deposited`, `Withdrawn`, `EmergencyWithdrawn`
 
-- [ ] 2. Create MockAavePool.sol (for local Anvil testing only)
-  - [ ] Create `contracts/mocks/MockAavePool.sol`
-  - [ ] Simulate Aave's `supply(address asset, uint256 amount, address onBehalfOf, uint16 referralCode)`
-  - [ ] Simulate Aave's `withdraw(address asset, uint256 amount, address to)`
-  - [ ] Track balances internally (simple mapping)
-  - [ ] ~30 lines — just enough so Strategy's try/catch has something to call
+- [x] 2. Create MockAavePool.sol (for local Anvil testing only)
+  - [x] Create `contracts/mocks/MockAavePool.sol`
+  - [x] Simulate Aave's `supply(address asset, uint256 amount, address onBehalfOf, uint16 referralCode)`
+  - [x] Simulate Aave's `withdraw(address asset, uint256 amount, address to)`
+  - [x] Track balances internally (simple mapping)
+  - [x] ~30 lines — just enough so Strategy's try/catch has something to call
 
-- [ ] 3. Create AaveStrategy.sol implementation
-  - [ ] Create `contracts/AaveStrategy.sol`
-  - [ ] State variables:
+- [x] 3. Create AaveStrategy.sol implementation
+  - [x] Create `contracts/AaveStrategy.sol`
+  - [x] State variables:
     ```solidity
     address public immutable vault;       // Only authorized caller
     address public immutable token;       // Underlying token (USDT)
     address public aavePool;              // Aave V3 Pool address (configurable for mock vs real)
     ```
-  - [ ] Constructor: Set vault, token, aavePool addresses
-  - [ ] `modifier onlyVault()` — only the Vault contract can call deposit/withdraw
-  - [ ] Implement `deposit(uint256 amount)`:
+  - [x] Constructor: Set vault, token, aavePool addresses
+  - [x] `modifier onlyVault()` — only the Vault contract can call deposit/withdraw
+  - [x] Implement `deposit(uint256 amount)`:
     - Only vault can call (`onlyVault`)
     - Transfer tokens from vault to strategy
     - Approve Aave pool to spend tokens
     - `try IPool(aavePool).supply(token, amount, address(this), 0)` with catch
     - If catch: return tokens to vault, return false
     - Emit event on success
-  - [ ] Implement `withdraw(uint256 amount)`:
+  - [x] Implement `withdraw(uint256 amount)`:
     - Only vault can call (`onlyVault`)
     - `try IPool(aavePool).withdraw(token, amount, vault)` with catch
     - Emit event on success
-  - [ ] Implement `totalAssets()`: Return aToken balance (or token balance from pool)
-  - [ ] Implement `emergencyWithdraw()`: Owner withdraws all funds back to vault
+  - [x] Implement `totalAssets()`: Return aToken balance (or token balance from pool)
+  - [x] Implement `emergencyWithdraw()`: Owner withdraws all funds back to vault
 
-- [ ] 4. Integrate strategy into VaultV3.sol
-  - [ ] Add state variables:
+- [x] 4. Integrate strategy into VaultV3.sol
+  - [x] Add state variables:
     ```solidity
     IStrategy public strategy;
     ```
-  - [ ] Add events: `StrategySet`, `Invested`, `Divested`
-  - [ ] Add `setStrategy(address _strategy)`:
+  - [x] Add events: `StrategySet`, `Invested`, `Divested`
+  - [x] Add `setStrategy(address _strategy)`:
     - Only `DEFAULT_ADMIN_ROLE` can call
     - Verify strategy's `underlyingToken()` matches expected token
     - Set `strategy`
-  - [ ] Add `invest(address token, uint256 amount)`:
+  - [x] Add `invest(address token, uint256 amount)`:
     - Only `TREASURER_ROLE` can call
     - Transfer tokens to strategy, then call `strategy.deposit(amount)`
     - Use try/catch — if strategy fails, tokens stay in vault
     - Emit `Invested` event
-  - [ ] Add `divest(uint256 amount)`:
+  - [x] Add `divest(uint256 amount)`:
     - Only `TREASURER_ROLE` can call
     - Call `strategy.withdraw(amount)`
     - Emit `Divested` event
-  - [ ] Add `getTotalBalance(address token)`:
+  - [x] Add `getTotalBalance(address token)`:
     - Return `tokenBalances[token][user] + strategy.totalAssets()` (vault + strategy)
 
-- [ ] 5. Write Foundry tests
-  - [ ] Create `test/AaveStrategy.t.sol`
-  - [ ] Test: Only vault can call `deposit()` / `withdraw()` (onlyVault modifier)
-  - [ ] Test: `invest()` moves tokens from vault to strategy to MockAavePool
-  - [ ] Test: `divest()` moves tokens back from pool to vault
-  - [ ] Test: `getTotalBalance()` returns vault balance + strategy balance
-  - [ ] Test: try/catch isolation — make MockAavePool revert, verify vault is unaffected
-  - [ ] Test: Only TREASURER_ROLE can call `invest()` / `divest()`
-  - [ ] Test: Only DEFAULT_ADMIN_ROLE can call `setStrategy()`
-  - [ ] Test: `emergencyWithdraw()` returns all funds to vault
+- [x] 5. Write Foundry tests
+  - [x] Create `test/AaveStrategy.t.sol`
+  - [x] Test: Only vault can call `deposit()` / `withdraw()` (onlyVault modifier)
+  - [x] Test: `invest()` moves tokens from vault to strategy to MockAavePool
+  - [x] Test: `divest()` moves tokens back from pool to vault
+  - [x] Test: `getTotalBalance()` returns vault balance + strategy balance
+  - [x] Test: try/catch isolation — make MockAavePool revert, verify vault is unaffected
+  - [x] Test: Only TREASURER_ROLE can call `invest()` / `divest()`
+  - [x] Test: Only DEFAULT_ADMIN_ROLE can call `setStrategy()`
+  - [x] Test: `emergencyWithdraw()` returns all funds to vault
 
-- [ ] 6. Add frontend support
-  - [ ] Update `frontend/hooks/useVault.ts`:
+- [x] 6. Add frontend support
+  - [x] Update `frontend/hooks/useVault.ts`:
     - Add `invest(amount)` function
     - Add `divest(amount)` function
     - Add `getTotalBalance()` read
-  - [ ] Update `frontend/components/AdminPanel.tsx`:
+  - [x] Update `frontend/components/AdminPanel.tsx`:
     - Add "Invest to Aave" / "Divest from Aave" buttons (Treasurer only)
     - Show strategy balance alongside vault balance
 

@@ -385,34 +385,7 @@ export function useVault() {
     hash: unpauseHash,
   })
 
-  // Auto-refetch all balances after successful transactions
-  useEffect(() => {
-    if (isDepositSuccess || isWithdrawSuccess) {
-      setTimeout(() => {
-        refetchEthBalance()
-        refetchVaultBalance()
-      }, 1000)
-    }
-    if (isDepositTokenSuccess || isWithdrawTokenSuccess || isApproveSuccess || isDepositWithPermitSuccess) {
-      setTimeout(() => {
-        refetchUsdtBalance()
-        refetchVaultUsdtBalance()
-        refetchUsdtAllowance()
-      }, 1000)
-    }
-  }, [
-    isDepositSuccess,
-    isWithdrawSuccess,
-    isDepositTokenSuccess,
-    isWithdrawTokenSuccess,
-    isApproveSuccess,
-    isDepositWithPermitSuccess,
-    refetchEthBalance,
-    refetchVaultBalance,
-    refetchUsdtBalance,
-    refetchVaultUsdtBalance,
-    refetchUsdtAllowance,
-  ])
+  
 
   const unpause = useCallback(() => {
     writeUnpause({
@@ -424,11 +397,19 @@ export function useVault() {
 
   // ============ Day 4: Strategy Functions ============
 
-  // Strategy balance: total USDT under management (vault + Aave)
-  const { data: totalStrategyBalance } = useReadContract({
+  // Only what's deployed in Aave (strategy.totalAssets())
+  const { data: strategyBalance, refetch: refetchStrategyBalance } = useReadContract({
     address: VAULT_ADDRESS,
     abi: VAULT_ABI,
-    functionName: 'getTotalBalance',
+    functionName: 'getStrategyBalance',
+    query: { enabled: !!address },
+  })
+
+  // Vault's idle ERC20 holdings — decreases when invest() is called
+  const { data: vaultTokenHoldings, refetch: refetchVaultTokenHoldings } = useReadContract({
+    address: VAULT_ADDRESS,
+    abi: VAULT_ABI,
+    functionName: 'getVaultTokenHoldings',
     args: [MOCK_USDT_ADDRESS],
     query: { enabled: !!address },
   })
@@ -468,6 +449,45 @@ export function useVault() {
     },
     [writeDivest]
   )
+  // Auto-refetch all balances after successful transactions
+  useEffect(() => {
+    if (isDepositSuccess || isWithdrawSuccess) {
+      setTimeout(() => {
+        refetchEthBalance()
+        refetchVaultBalance()
+      }, 1000)
+    }
+    if (isDepositTokenSuccess || isWithdrawTokenSuccess || isApproveSuccess || isDepositWithPermitSuccess) {
+      setTimeout(() => {
+        refetchUsdtBalance()
+        refetchVaultUsdtBalance()
+        refetchUsdtAllowance()
+        refetchVaultTokenHoldings()  // vault's idle ERC20 balance changes on every deposit/withdraw
+      }, 1000)
+    }
+  }, [
+    isDepositSuccess,
+    isWithdrawSuccess,
+    isDepositTokenSuccess,
+    isWithdrawTokenSuccess,
+    isApproveSuccess,
+    isDepositWithPermitSuccess,
+    refetchEthBalance,
+    refetchVaultBalance,
+    refetchUsdtBalance,
+    refetchVaultUsdtBalance,
+    refetchUsdtAllowance,
+    refetchVaultTokenHoldings,
+  ])
+  // Refetch strategy balances after invest/divest confirms
+  useEffect(() => {
+    if (isInvestSuccess || isDivestSuccess) {
+      setTimeout(() => {
+        refetchStrategyBalance()
+        refetchVaultTokenHoldings()
+      }, 1000)
+    }
+  }, [isInvestSuccess, isDivestSuccess, refetchStrategyBalance, refetchVaultTokenHoldings])
 
   return {
     // ETH Balances
@@ -555,7 +575,11 @@ export function useVault() {
     isDivestSuccess,
     investHash,
     divestHash,
-    totalStrategyBalance: totalStrategyBalance ?? BigInt(0),
-    totalStrategyBalanceFormatted: totalStrategyBalance ? formatUnits(totalStrategyBalance, 6) : '0',
+    // strategyBalance: only what's deployed in Aave (strategy.totalAssets())
+    strategyBalance: strategyBalance ?? BigInt(0),
+    strategyBalanceFormatted: strategyBalance ? formatUnits(strategyBalance, 6) : '0',
+    // vaultTokenHoldings: vault's idle ERC20 balance (decreases on invest, increases on divest/deposit)
+    vaultTokenHoldings: vaultTokenHoldings ?? BigInt(0),
+    vaultTokenHoldingsFormatted: vaultTokenHoldings ? formatUnits(vaultTokenHoldings, 6) : '0',
   }
 }

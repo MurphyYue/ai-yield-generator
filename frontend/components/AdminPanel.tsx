@@ -14,8 +14,8 @@ export function AdminPanel() {
     invest, divest,
     isInvesting, isDivesting,
     isInvestSuccess, isDivestSuccess,
-    vaultUsdtBalanceFormatted,
-    totalStrategyBalanceFormatted,
+    vaultTokenHoldingsFormatted,
+    strategyBalanceFormatted,
   } = useVault()
 
   const [investAmount, setInvestAmount] = useState('')
@@ -115,9 +115,9 @@ export function AdminPanel() {
             background: 'var(--surface-3)', border: '1px solid var(--border)',
             borderRadius: 8, padding: '0.625rem',
           }}>
-            <div style={{ fontSize: '0.6rem', color: 'var(--text-3)', marginBottom: 2, letterSpacing: '0.08em', textTransform: 'uppercase', fontWeight: 600 }}>Vault</div>
+            <div style={{ fontSize: '0.6rem', color: 'var(--text-3)', marginBottom: 2, letterSpacing: '0.08em', textTransform: 'uppercase', fontWeight: 600 }}>Vault idle</div>
             <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.9rem', fontWeight: 500, color: 'var(--green)' }}>
-              {parseFloat(vaultUsdtBalanceFormatted).toFixed(2)}
+              {parseFloat(vaultTokenHoldingsFormatted).toFixed(2)}
             </div>
             <div style={{ fontSize: '0.6rem', color: 'var(--text-3)', marginTop: 1 }}>USDT</div>
           </div>
@@ -127,7 +127,7 @@ export function AdminPanel() {
           }}>
             <div style={{ fontSize: '0.6rem', color: 'var(--text-3)', marginBottom: 2, letterSpacing: '0.08em', textTransform: 'uppercase', fontWeight: 600 }}>In Aave</div>
             <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.9rem', fontWeight: 500, color: 'var(--purple)' }}>
-              {parseFloat(totalStrategyBalanceFormatted).toFixed(2)}
+              {parseFloat(strategyBalanceFormatted).toFixed(2)}
             </div>
             <div style={{ fontSize: '0.6rem', color: 'var(--text-3)', marginTop: 1 }}>USDT</div>
           </div>

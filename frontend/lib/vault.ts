@@ -40,6 +40,8 @@ export const VAULT_ABI = parseAbi([
   'function divest(uint256 amount) external',
   'function emergencyDivest() external',
   'function getTotalBalance(address token) external view returns (uint256)',
+  'function getStrategyBalance() external view returns (uint256)',
+  'function getVaultTokenHoldings(address token) external view returns (uint256)',
   'function strategy() external view returns (address)',
   // Events
   'event Deposited(address indexed user, uint256 amount)',
@@ -55,7 +57,7 @@ export const VAULT_ABI = parseAbi([
 ])
 
 // VaultV3 Contract Address (Day 4 - Deployed with EIP-2612 Permit)
-export const VAULT_ADDRESS = '0x3Aa5ebB10DC797CAC828524e59A333d0A371443c' as const
+export const VAULT_ADDRESS = '0xf5059a5D33d5853360D16C683c16e67980206f36' as const
 
 // MockUSDT (ERC20 Token) ABI
 export const ERC20_ABI = parseAbi([
@@ -93,4 +95,4 @@ export const ERC20_PERMIT_ABI = parseAbi([
 ])
 
 // MockUSDT Token Address (Day 4 - Deployed with ERC20Permit)
-export const MOCK_USDT_ADDRESS = '0x68B1D87F95878fE05B998F19b66F4baba5De1aed' as const
+export const MOCK_USDT_ADDRESS = '0x851356ae760d987E095750cCeb3bC6014560891C' as const

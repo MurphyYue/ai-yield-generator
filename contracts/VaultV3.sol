@@ -229,6 +229,20 @@ contract VaultV3 is AccessControl, Pausable, ReentrancyGuard {
         return vaultBalance;
     }
 
+    /// @notice Get only the tokens currently deployed in the strategy (e.g. sitting in Aave)
+    /// @return Amount in strategy; 0 if no strategy is set
+    function getStrategyBalance() external view returns (uint256) {
+        if (address(strategy) == address(0)) return 0;
+        return strategy.totalAssets();
+    }
+
+    /// @notice Get the vault contract's idle ERC20 holdings (not counting strategy)
+    /// @param token ERC20 token address
+    /// @return Vault's raw ERC20 balance — decreases when invest() is called
+    function getVaultTokenHoldings(address token) external view returns (uint256) {
+        return IERC20(token).balanceOf(address(this));
+    }
+
     // ============ CORE FUNCTIONS (Public, Pausable) ============
 
     /// @notice Deposit ETH into the vault
