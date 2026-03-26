@@ -7,6 +7,7 @@ import "@openzeppelin/contracts/utils/Pausable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Permit.sol";
+import "./IStrategy.sol";
 
 /// @title VaultV3 - Multi-Role Governance Vault with SoD (Separation of Duties)
 /// @notice Supports both ETH and ERC20 tokens with role-based access control and emergency pause
@@ -36,6 +37,11 @@ contract VaultV3 is AccessControl, Pausable, ReentrancyGuard {
     uint256 public withdrawalFee = 0; // 0% by default
     uint256 public constant MAX_FEE = 1000; // Max 10%
 
+    // ============ STRATEGY STATE ============
+
+    /// @notice Active yield strategy (set by DEFAULT_ADMIN_ROLE)
+    IStrategy public strategy;
+
     // Events
     event Deposited(address indexed user, uint256 amount);
     event Withdrawn(address indexed user, uint256 amount, uint256 fee);
@@ -48,6 +54,9 @@ contract VaultV3 is AccessControl, Pausable, ReentrancyGuard {
     event WithdrawalFeeUpdated(uint256 oldFee, uint256 newFee);
     event ThresholdUpdated(uint256 oldThreshold, uint256 newThreshold);
     // RoleGranted event is inherited from AccessControl, don't redefine
+    event StrategySet(address indexed strategy);
+    event Invested(address indexed token, uint256 amount);
+    event Divested(address indexed token, uint256 amount);
 
     /// @notice Constructor - grant all roles to deployer for initial setup
     constructor() {
@@ -151,6 +160,73 @@ contract VaultV3 is AccessControl, Pausable, ReentrancyGuard {
         uint256 oldThreshold = largeWithdrawalThreshold;
         largeWithdrawalThreshold = newThreshold;
         emit ThresholdUpdated(oldThreshold, newThreshold);
+    }
+
+    // ============ STRATEGY FUNCTIONS (TREASURER / ADMIN) ============
+
+    /// @notice Set the active yield strategy (Admin only)
+    /// @dev Verifies strategy manages the right token before setting
+    /// @param _strategy Address of the IStrategy implementation
+    function setStrategy(address _strategy) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        require(_strategy != address(0), "Invalid strategy address");
+        strategy = IStrategy(_strategy);
+        emit StrategySet(_strategy);
+    }
+
+    /// @notice Invest vault tokens into the active strategy (Treasurer only)
+    /// @dev Transfers tokens to strategy, then calls strategy.deposit().
+    ///      If strategy deposit fails (Aave down), tokens return to vault and this call reverts.
+    ///      Normal user deposit/withdraw operations are NEVER affected.
+    /// @param token ERC20 token address to invest
+    /// @param amount Amount to invest
+    function invest(address token, uint256 amount) external nonReentrant onlyRole(TREASURER_ROLE) {
+        require(address(strategy) != address(0), "No strategy set");
+        require(strategy.underlyingToken() == token, "Token mismatch with strategy");
+        require(amount > 0, "Amount must be > 0");
+        require(IERC20(token).balanceOf(address(this)) >= amount, "Insufficient vault balance");
+
+        // Step 1: Move tokens from vault to strategy contract
+        IERC20(token).transfer(address(strategy), amount);
+
+        // Step 2: Tell strategy to deposit into Aave
+        // Strategy's try/catch handles Aave failures and returns tokens to vault if needed
+        bool success = strategy.deposit(amount);
+        require(success, "Strategy deposit failed - tokens returned to vault");
+
+        emit Invested(token, amount);
+    }
+
+    /// @notice Withdraw tokens from strategy back to vault (Treasurer only)
+    /// @dev Strategy pulls from Aave and sends tokens directly to this vault.
+    /// @param amount Amount to withdraw from strategy
+    function divest(uint256 amount) external nonReentrant onlyRole(TREASURER_ROLE) {
+        require(address(strategy) != address(0), "No strategy set");
+        require(amount > 0, "Amount must be > 0");
+        require(strategy.totalAssets() >= amount, "Insufficient strategy balance");
+
+        bool success = strategy.withdraw(amount);
+        require(success, "Strategy withdraw failed");
+
+        emit Divested(strategy.underlyingToken(), amount);
+    }
+
+    /// @notice Emergency: pull all funds from strategy back to vault (Admin only)
+    /// @dev Bypasses whenNotPaused — usable even in emergency pause
+    function emergencyDivest() external onlyRole(DEFAULT_ADMIN_ROLE) {
+        require(address(strategy) != address(0), "No strategy set");
+        bool success = strategy.emergencyWithdraw();
+        require(success, "Emergency withdraw failed");
+    }
+
+    /// @notice Get combined balance: vault holdings + strategy holdings for a token
+    /// @param token ERC20 token address
+    /// @return Total tokens under vault management
+    function getTotalBalance(address token) external view returns (uint256) {
+        uint256 vaultBalance = IERC20(token).balanceOf(address(this));
+        if (address(strategy) != address(0) && strategy.underlyingToken() == token) {
+            return vaultBalance + strategy.totalAssets();
+        }
+        return vaultBalance;
     }
 
     // ============ CORE FUNCTIONS (Public, Pausable) ============

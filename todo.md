@@ -998,11 +998,12 @@ EIP-2612 Solution:
 - `frontend/components/DepositPanel.tsx` - Integrate permit flow
 - `frontend/lib/vault.ts` - Update ABIs
 
+
 ---
 
 ## Session 2: Protocol Layer - Strategy Pattern (11:30 - 14:00, 2.5h)
 
-### Mission O: Robust Aave Strategy Architecture
+### Mission O: Robust Aave Strategy Architecture (Strategy Pattern)
 
 **Why Strategy Pattern?**
 
@@ -1016,95 +1017,122 @@ Strategy Pattern Solution:
 - Add new strategies without touching vault logic
 - Control fund flow with try/catch for external protocol risk
 
+**Aave V3 on Sepolia:**
+- Aave V3 is deployed on Sepolia testnet — no API key needed, it's an on-chain protocol
+- Aave Pool (Sepolia): `0x6Ae43d3271ff6888e7Fc43Fd7321a503ff738951`
+- For local Anvil testing, we use a `MockAavePool.sol` (like MockERC20 — a test stand-in)
+- On Sepolia deployment, AaveStrategy points to the real Aave V3 Pool
+
+**Architecture: Fund Routing**
+```
+Vault.invest() → Strategy.deposit() → AavePool.supply()
+Vault.divest() → Strategy.withdraw() → AavePool.withdraw()
+```
+
+**Security Logic (Tutor's Key Points):**
+1. **Permission Locking**: Only `Vault` can call `Strategy` deposit/withdraw (modifier: `onlyVault`)
+2. **Fund Routing**: `Vault.invest()` → `Strategy.deposit()` → `AavePool.supply()`
+3. **Failure Isolation**: `try/catch` wraps all Aave calls — external protocol failure never crashes the Vault
+
 **Implementation Tasks:**
 
-- [ ] 1. Create IAaveStrategy.sol interface
-  - [ ] Create `contracts/IAaveStrategy.sol`
-  - [ ] Define interface functions:
+- [ ] 1. Create IStrategy.sol interface
+  - [ ] Create `contracts/IStrategy.sol`
+  - [ ] Define interface:
     ```solidity
-    function depositToAave(uint256 amount) external returns (bool success);
-    function withdrawFromAave(uint256 amount) external returns (bool success);
-    function getAaveBalance() external view returns (uint256 balance);
-    function getTokenAddress() external view returns (address tokenAddress);
-    function isInitialized() external view returns (bool initialized);
-    function emergencyWithdraw() external returns (bool success);
+    interface IStrategy {
+        function deposit(uint256 amount) external returns (bool success);
+        function withdraw(uint256 amount) external returns (bool success);
+        function totalAssets() external view returns (uint256);
+        function underlyingToken() external view returns (address);
+        function emergencyWithdraw() external returns (bool success);
+    }
     ```
-  - [ ] Add events: DepositedToAave, WithdrawnFromAave, EmergencyWithdrawn
+  - [ ] Add events: `Deposited`, `Withdrawn`, `EmergencyWithdrawn`
 
-- [ ] 2. Create AaveStrategy.sol implementation
+- [ ] 2. Create MockAavePool.sol (for local Anvil testing only)
+  - [ ] Create `contracts/mocks/MockAavePool.sol`
+  - [ ] Simulate Aave's `supply(address asset, uint256 amount, address onBehalfOf, uint16 referralCode)`
+  - [ ] Simulate Aave's `withdraw(address asset, uint256 amount, address to)`
+  - [ ] Track balances internally (simple mapping)
+  - [ ] ~30 lines — just enough so Strategy's try/catch has something to call
+
+- [ ] 3. Create AaveStrategy.sol implementation
   - [ ] Create `contracts/AaveStrategy.sol`
   - [ ] State variables:
-    - `address public immutable vault` - Only authorized caller
-    - `address public immutable token` - Underlying token (USDT)
-    - `address public immutable aToken` - Aave interest-bearing token
-    - `bool public initialized`
-  - [ ] Constructor: Set vault, token, aToken addresses
-  - [ ] Implement `depositToAave()`:
-    - Only vault can call (modifier: `onlyVault`)
+    ```solidity
+    address public immutable vault;       // Only authorized caller
+    address public immutable token;       // Underlying token (USDT)
+    address public aavePool;              // Aave V3 Pool address (configurable for mock vs real)
+    ```
+  - [ ] Constructor: Set vault, token, aavePool addresses
+  - [ ] `modifier onlyVault()` — only the Vault contract can call deposit/withdraw
+  - [ ] Implement `deposit(uint256 amount)`:
+    - Only vault can call (`onlyVault`)
     - Transfer tokens from vault to strategy
     - Approve Aave pool to spend tokens
-    - Try `IPool(aToken).deposit()` with catch block
-    - If failed, return tokens to vault
+    - `try IPool(aavePool).supply(token, amount, address(this), 0)` with catch
+    - If catch: return tokens to vault, return false
     - Emit event on success
-  - [ ] Implement `withdrawFromAave()`:
-    - Only vault can call
-    - Try `IPool(aToken).withdraw()` with catch block
-    - Transfer withdrawn tokens to vault
+  - [ ] Implement `withdraw(uint256 amount)`:
+    - Only vault can call (`onlyVault`)
+    - `try IPool(aavePool).withdraw(token, amount, vault)` with catch
     - Emit event on success
-  - [ ] Implement `getAaveBalance()`: Return aToken balance
-  - [ ] Implement `emergencyWithdraw()`: Owner can withdraw all funds in emergency
+  - [ ] Implement `totalAssets()`: Return aToken balance (or token balance from pool)
+  - [ ] Implement `emergencyWithdraw()`: Owner withdraws all funds back to vault
 
-- [ ] 3. Integrate strategy into VaultV3.sol
+- [ ] 4. Integrate strategy into VaultV3.sol
   - [ ] Add state variables:
     ```solidity
-    IAaveStrategy public aaveStrategy;
-    mapping(address => bool) public isStrategyApproved;
+    IStrategy public strategy;
     ```
-  - [ ] Add events: StrategySet, Invested, Divested
-  - [ ] Add `setStrategy(address strategy, address token)`:
-    - Only DEFAULT_ADMIN_ROLE can call
-    - Verify strategy is initialized
-    - Verify strategy token matches parameter
-    - Set `aaveStrategy` and `isStrategyApproved[strategy]`
-  - [ ] Add `invest(uint256 amount)`:
-    - Only TREASURER_ROLE can call
-    - Check vault has sufficient balance
-    - Call `aaveStrategy.depositToAave(amount)`
-    - Emit Invested event
+  - [ ] Add events: `StrategySet`, `Invested`, `Divested`
+  - [ ] Add `setStrategy(address _strategy)`:
+    - Only `DEFAULT_ADMIN_ROLE` can call
+    - Verify strategy's `underlyingToken()` matches expected token
+    - Set `strategy`
+  - [ ] Add `invest(address token, uint256 amount)`:
+    - Only `TREASURER_ROLE` can call
+    - Transfer tokens to strategy, then call `strategy.deposit(amount)`
+    - Use try/catch — if strategy fails, tokens stay in vault
+    - Emit `Invested` event
   - [ ] Add `divest(uint256 amount)`:
-    - Only TREASURER_ROLE can call
-    - Check strategy has sufficient balance
-    - Call `aaveStrategy.withdrawFromAave(amount)`
-    - Emit Divested event
+    - Only `TREASURER_ROLE` can call
+    - Call `strategy.withdraw(amount)`
+    - Emit `Divested` event
   - [ ] Add `getTotalBalance(address token)`:
-    - Return vault balance + strategy balance
+    - Return `tokenBalances[token][user] + strategy.totalAssets()` (vault + strategy)
 
-- [ ] 4. Add frontend support
+- [ ] 5. Write Foundry tests
+  - [ ] Create `test/AaveStrategy.t.sol`
+  - [ ] Test: Only vault can call `deposit()` / `withdraw()` (onlyVault modifier)
+  - [ ] Test: `invest()` moves tokens from vault to strategy to MockAavePool
+  - [ ] Test: `divest()` moves tokens back from pool to vault
+  - [ ] Test: `getTotalBalance()` returns vault balance + strategy balance
+  - [ ] Test: try/catch isolation — make MockAavePool revert, verify vault is unaffected
+  - [ ] Test: Only TREASURER_ROLE can call `invest()` / `divest()`
+  - [ ] Test: Only DEFAULT_ADMIN_ROLE can call `setStrategy()`
+  - [ ] Test: `emergencyWithdraw()` returns all funds to vault
+
+- [ ] 6. Add frontend support
   - [ ] Update `frontend/hooks/useVault.ts`:
     - Add `invest(amount)` function
     - Add `divest(amount)` function
-    - Add `getTotalBalance()` function
+    - Add `getTotalBalance()` read
   - [ ] Update `frontend/components/AdminPanel.tsx`:
-    - Add "Invest to Aave" button (Treasurer only)
-    - Add "Divest from Aave" button (Treasurer only)
-    - Show strategy balance
-    - Show total vault balance (vault + strategy)
+    - Add "Invest to Aave" / "Divest from Aave" buttons (Treasurer only)
+    - Show strategy balance alongside vault balance
 
-- [ ] 5. Test strategy integration
-  - [ ] Deploy AaveStrategy with mock addresses
-  - [ ] Test invest() deposits to strategy
-  - [ ] Test divest() withdraws from strategy
-  - [ ] Test getTotalBalance() includes strategy funds
-  - [ ] Test try/catch prevents Aave failures from reverting vault
+**Milestone**: VaultV3 can route USDT to Aave via Strategy, and strategy failures don't crash the vault
 
-**Milestone**: ✅ Vault generates yield through Aave, strategy failures don't affect vault
-
-**Files Modified:**
-- `contracts/IAaveStrategy.sol` - NEW FILE - Strategy interface
-- `contracts/AaveStrategy.sol` - NEW FILE - Strategy implementation
-- `contracts/VaultV3.sol` - Add strategy support
-- `frontend/hooks/useVault.ts` - Add invest/divest functions
-- `frontend/components/AdminPanel.tsx` - Add strategy controls
+**Files to Create/Modify:**
+- `contracts/IStrategy.sol` - NEW - Generic strategy interface
+- `contracts/mocks/MockAavePool.sol` - NEW - Local test mock for Aave
+- `contracts/AaveStrategy.sol` - NEW - Aave V3 strategy implementation
+- `contracts/VaultV3.sol` - MODIFY - Add strategy integration
+- `test/AaveStrategy.t.sol` - NEW - Strategy test suite
+- `frontend/hooks/useVault.ts` - MODIFY - Add invest/divest
+- `frontend/components/AdminPanel.tsx` - MODIFY - Add strategy controls
 
 ---
 
@@ -1114,166 +1142,114 @@ Strategy Pattern Solution:
 
 ---
 
-## Session 3: Data Layer - Ponder Indexing (15:00 - 17:00, 2h)
+## Session 3: Data Layer - Minimal Ponder Indexing (15:00 - 17:00, 2h)
 
 ### Mission P: Minimal Indexing Gateway
 
 **Why Ponder Indexing?**
 
-Current Problem (Day 3):
+Current Problem:
 - Frontend relies on RPC calls for all data
 - No historical transaction tracking
-- Slow and expensive to query events
+- Slow and expensive to query past events
 
 Ponder Solution:
 - Transform blockchain "cold data" (events) to "hot data" (instant queries)
 - Modern alternative to The Graph
-- Uses TypeScript (familiar to frontend developers)
-- <30 lines of code with AI assistance
+- Uses TypeScript — your 10-year frontend experience is a direct advantage here
+- <30 lines of handler code with AI assistance
+
+**Tutor's approach: Keep it minimal.**
+- ONE entity: `DepositHistory`
+- ONE handler: listen to `TokenDeposited` event
+- Store `sender`, `amount`, `timestamp` — done.
 
 **Implementation Tasks:**
 
-- [ ] 1. Create Ponder project
-  - [ ] Run `pnpm create ponder ponder-indexing` in project root
-  - [ ] Install dependencies: `pnpm add @ponder/core @ponder/utils`
-  - [ ] Copy VaultV3 ABI to `ponder-indexing/abis/VaultV3.json`
+- [ ] 1. Initialize Ponder project
+  - [ ] Run `pnpm create ponder` in project root (follow prompts, select existing ABI)
+  - [ ] Copy VaultV3 ABI JSON to the ponder project's `abis/` directory
 
-- [ ] 2. Configure ponder.config.ts
-  - [ ] Create `ponder-indexing/ponder.config.ts`
-  - [ ] Configure networks:
-    - Anvil (local development): chainId 31337, rpcUrl http://localhost:8545
-    - Sepolia (production): chainId 11155111, rpcUrl from env var
-  - [ ] Configure contracts:
-    - VaultV3: network, address, ABI path
-  - [ ] Configure database: SQLite for development
+- [ ] 2. Configure `ponder.config.ts`
+  - [ ] Set network: Anvil local (chainId 31337, rpcUrl `http://localhost:8545`)
+  - [ ] Set contract: VaultV3 address + ABI
+  - [ ] Note: When switching to Sepolia later, just change network config
 
-- [ ] 3. Define schema
-  - [ ] Create `ponder-indexing/src/schema.ts`
-  - [ ] Define DepositHistory entity:
+- [ ] 3. Define schema in `ponder.schema.ts`
+  - [ ] Define ONE entity: `DepositHistory`
     ```typescript
-    DepositHistory: {
-      id: string              // tx hash + log index
-      sender: string          // User address
-      amount: string          // Amount deposited
-      token: string           // Token address
-      tokenSymbol: string     // ETH or USDT
-      timestamp: number       // Block timestamp
-      blockNumber: number     // Block number
-      transactionHash: string // Transaction hash
-    }
+    // Fields: id, sender, amount, token, tokenSymbol, timestamp, blockNumber, transactionHash
     ```
 
-- [ ] 4. Write indexing logic
-  - [ ] Create `ponder-indexing/src/index.ts`
-  - [ ] Listen to `VaultV3_TokenDeposited` event:
-    - Extract args: user, token, amount
-    - Fetch token symbol from contract
-    - Create DepositHistory record
-    - Store in database
-  - [ ] Listen to `VaultV3_Deposited` event (ETH deposits):
-    - Extract args: user, amount
-    - Set token to 0x0...0, symbol to "ETH"
-    - Create DepositHistory record
+- [ ] 4. Write handler in `src/index.ts` (<30 lines)
+  - [ ] Listen to `TokenDeposited` event
+  - [ ] On event: create `DepositHistory` record with sender, amount, timestamp
+  - [ ] (Optional) Also listen to `Deposited` (ETH) event
 
-- [ ] 5. Create GraphQL API (optional)
-  - [ ] Create `ponder-indexing/src/api.ts`
-  - [ ] Add REST endpoints:
-    - `GET /api/deposits/:address` - Get deposits by user
-    - `GET /api/deposits/recent` - Get recent deposits
-  - [ ] GraphQL endpoint auto-generated at `/graphql`
-
-- [ ] 6. Test Ponder indexing
+- [ ] 5. Test locally
   - [ ] Start Ponder: `pnpm dev`
-  - [ ] Check GraphQL playground: http://localhost:42069/graphql
-  - [ ] Query deposit history:
-    ```graphql
-    {
-      depositHistories(orderBy: "timestamp", orderDirection: "desc") {
-        items {
-          sender
-          amount
-          tokenSymbol
-          timestamp
-        }
-      }
-    }
-    ```
-  - [ ] Verify events indexed in <1 second
+  - [ ] Make a deposit through the frontend
+  - [ ] Query via Ponder's built-in GraphQL playground
+  - [ ] Verify the deposit appears in query results
 
-- [ ] 7. Frontend integration (optional)
-  - [ ] Create `frontend/hooks/useDepositHistory.ts`
-  - [ ] Query Ponder API for deposit history
-  - [ ] Display in UI component
+**Milestone**: Ponder running locally, you can query your deposit history via GraphQL instantly
 
-**Milestone**: ✅ Ponder indexes deposit events, GraphQL API returns instant queries
-
-**Files Modified:**
-- `ponder-indexing/ponder.config.ts` - NEW FILE - Ponder configuration
-- `ponder-indexing/src/schema.ts` - NEW FILE - DepositHistory schema
-- `ponder-indexing/src/index.ts` - NEW FILE - Event handlers
-- `ponder-indexing/src/api.ts` - NEW FILE - GraphQL/REST API
-- `frontend/hooks/useDepositHistory.ts` - NEW FILE - Ponder integration (optional)
+**Files to Create:**
+- `ponder-indexing/ponder.config.ts` - Ponder configuration
+- `ponder-indexing/ponder.schema.ts` - DepositHistory schema
+- `ponder-indexing/src/index.ts` - Event handler (<30 lines)
 
 ---
 
-## Session 4: Deployment - Sepolia Testnet (17:00 - 20:00, 3h)
+## Session 4: Full-Stack Deployment - Sepolia Testnet (17:00 - 20:00, 3h)
 
 ### Mission Q: Real Network Deployment
 
-**Why Sepolia Deployment?**
+**Why Sepolia?**
 
-Current Problem (Day 3):
-- Everything running on Anvil (perfect simulation)
-- No gas cost awareness
-- No block explorers
-- No real transaction confirmations
-
-Sepolia Solution:
-- Face real-world challenges (gas, confirmations, verification)
-- Test on public testnet before mainnet
-- Verify contracts on Etherscan
-- Real transaction history
+Leave the Anvil sandbox and face real-world challenges:
+- Real gas costs and block confirmations
+- Contract verification on Etherscan (public source code)
+- Real Aave V3 protocol interaction
+- Real transaction history visible to anyone
 
 **Implementation Tasks:**
 
-- [ ] 1. Create deployment script
-  - [ ] Create `script/Deploy.s.sol`
-  - [ ] Import contracts: VaultV3, MockERC20, AaveStrategy
-  - [ ] Read deployer private key from env: `vm.envUint("PRIVATE_KEY")`
-  - [ ] Deployment order:
-    1. Deploy MockERC20 with Permit (1M USDT initial supply)
-    2. Deploy AaveStrategy (with mock Aave pool address initially)
-    3. Deploy VaultV3
-    4. Initialize strategy
-    5. Set strategy in vault
-    6. Mint test USDT to deployer (10,000 USDT)
-  - [ ] Log deployed addresses with `console.log()`
+- [ ] 1. Prepare environment
+  - [ ] Get Alchemy API key (free tier): https://www.alchemy.com/
+  - [ ] Get Etherscan API key (free): https://etherscan.io/apis
+  - [ ] Create a **dedicated testnet wallet** (never use mainnet keys!)
+  - [ ] Get Sepolia ETH from faucet (try multiple if one is dry):
+    - Google Cloud faucet: https://cloud.google.com/application/web3/faucet/ethereum/sepolia
+    - Alchemy faucet: https://sepoliafaucet.com/
+  - [ ] Set environment variables in `.env`:
+    ```bash
+    PRIVATE_KEY=your_sepolia_private_key
+    SEPOLIA_RPC_URL=https://eth-sepolia.g.alchemy.com/v2/YOUR_KEY
+    ETHERSCAN_API_KEY=your_etherscan_api_key
+    ```
 
 - [ ] 2. Update foundry.toml for Sepolia
-  - [ ] Add Etherscan config:
-    ```toml
-    [etherscan]
-    sepolia = { key = "${ETHERSCAN_API_KEY}" }
-    ```
-  - [ ] Add RPC endpoints:
+  - [ ] Add Sepolia RPC and Etherscan config:
     ```toml
     [rpc_endpoints]
     sepolia = "${SEPOLIA_RPC_URL}"
+
+    [etherscan]
+    sepolia = { key = "${ETHERSCAN_API_KEY}" }
     ```
 
-- [ ] 3. Prepare environment variables
-  - [ ] Get Alchemy API key: https://www.alchemy.com/
-  - [ ] Get Etherscan API key: https://etherscan.io/apis
-  - [ ] Get Sepolia private key (use dedicated testnet wallet)
-  - [ ] Set environment variables:
-    ```bash
-    export PRIVATE_KEY=your_sepolia_private_key
-    export SEPOLIA_RPC_URL=https://eth-sepolia.g.alchemy.com/v2/YOUR_KEY
-    export ETHERSCAN_API_KEY=your_etherscan_api_key
-    ```
+- [ ] 3. Create/update deployment script
+  - [ ] Update `script/Deploy.s.sol` to deploy all contracts:
+    1. Deploy MockERC20 (test USDT with Permit)
+    2. Deploy VaultV3
+    3. Deploy AaveStrategy (pointing to real Aave V3 Pool on Sepolia: `0x6Ae43d3271ff6888e7Fc43Fd7321a503ff738951`)
+    4. Set strategy in VaultV3
+    5. Mint test USDT to deployer
+  - [ ] Log all deployed addresses with `console.log()`
 
-- [ ] 4. Deploy to Sepolia
-  - [ ] Run deployment script:
+- [ ] 4. Deploy and verify on Etherscan
+  - [ ] Deploy:
     ```bash
     forge script script/Deploy.s.sol:DeployScript \
       --rpc-url $SEPOLIA_RPC_URL \
@@ -1281,45 +1257,88 @@ Sepolia Solution:
       --verify \
       --etherscan-api-key $ETHERSCAN_API_KEY
     ```
-  - [ ] Save deployed contract addresses
-  - [ ] Check contracts on Etherscan (verification links in output)
+  - [ ] If `--verify` fails (Etherscan rate limits), verify manually:
+    ```bash
+    forge verify-contract <CONTRACT_ADDRESS> contracts/VaultV3.sol:VaultV3 \
+      --chain-id 11155111 \
+      --etherscan-api-key $ETHERSCAN_API_KEY
+    ```
+  - [ ] Save all deployed addresses to `DEPLOYED_ADDRESSES.md`
 
 - [ ] 5. Update frontend for Sepolia
-  - [ ] Update `frontend/lib/wagmi.ts`:
-    - Import `sepolia` from `viem/chains`
-    - Change chains from `[anvil]` to `[sepolia]`
-    - Update transport to use Alchemy RPC URL
-  - [ ] Update `frontend/lib/vault.ts`:
-    - Replace VAULT_ADDRESS with deployed address
-    - Replace MOCK_USDT_ADDRESS with deployed address
-  - [ ] Create `frontend/.env.local`:
-    ```bash
-    NEXT_PUBLIC_ALCHEMY_RPC_URL=https://eth-sepolia.g.alchemy.com/v2/YOUR_KEY
-    NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID=your_walletconnect_project_id
+  - [ ] Use env-based chain config (support both Anvil and Sepolia):
+    - `frontend/.env.local`:
+      ```bash
+      NEXT_PUBLIC_CHAIN=sepolia
+      NEXT_PUBLIC_ALCHEMY_RPC_URL=https://eth-sepolia.g.alchemy.com/v2/YOUR_KEY
+      NEXT_PUBLIC_VAULT_ADDRESS=<deployed_vault_address>
+      NEXT_PUBLIC_USDT_ADDRESS=<deployed_usdt_address>
+      ```
+    - Update `frontend/lib/wagmi.ts` to read chain from env
+    - Update `frontend/lib/vault.ts` to read addresses from env
+  - [ ] This way you can switch between Anvil and Sepolia by changing `.env.local`
+
+- [ ] 6. End-to-end test on Sepolia
+  - [ ] Connect MetaMask to Sepolia network
+  - [ ] Test deposit ETH to vault
+  - [ ] Test deposit USDT with permit (one-click)
+  - [ ] Test invest USDT to Aave via strategy
+  - [ ] Check all transactions on Etherscan
+  - [ ] Verify contract source code is visible on Etherscan
+
+**Milestone**: All contracts deployed to Sepolia, verified on Etherscan, frontend fully functional on testnet
+
+**Files to Create/Modify:**
+- `script/Deploy.s.sol` - UPDATE - Full deployment script for Sepolia
+- `foundry.toml` - MODIFY - Add Sepolia config
+- `frontend/.env.local` - NEW - Environment-based chain/address config
+- `frontend/lib/wagmi.ts` - MODIFY - Env-based chain selection
+- `frontend/lib/vault.ts` - MODIFY - Env-based contract addresses
+- `DEPLOYED_ADDRESSES.md` - NEW - Record of all Sepolia deployments
+
+---
+
+## Session 5: AI Layer - Strategy Suggestions (20:00 - 21:00, 1h)
+
+### Mission R: AI-Powered Strategy Advisory
+
+**Why upgrade the AI layer?**
+
+Current state: Dify only does risk assessment ("this withdrawal is HIGH risk").
+Next level: Dify gives **strategy suggestions** ("Aave USDT yield is 4.2% — should you invest?").
+
+This connects your AI layer to the Strategy layer, completing the "Deposit → Invest → Monitor" loop.
+
+**Implementation Tasks:**
+
+- [ ] 1. Enhance Dify system prompt
+  - [ ] Add strategy-related intents: "invest", "divest", "check yield"
+  - [ ] Add intent schema for strategy actions:
+    ```json
+    {"action": "invest|divest|check_yield", "amount": number, "token": "USDT", "protocol": "aave"}
     ```
 
-- [ ] 6. Get testnet funds
-  - [ ] Get Sepolia ETH from faucet: https://sepoliafaucet.com/
-  - [ ] Mint test USDT from MockUSDT contract (use Etherscan write contract)
+- [ ] 2. Update API route for strategy suggestions
+  - [ ] Accept strategy-related intents from Dify
+  - [ ] For "check_yield" or deposit intents, add a suggestion field:
+    - e.g., `"suggestion": "You have 1000 USDT idle in vault. Consider investing in Aave for yield."`
+  - [ ] For "invest" intents, calculate risk same as withdrawals
 
-- [ ] 7. Test & verify
-  - [ ] Connect MetaMask to Sepolia network
-  - [ ] Verify wallet shows correct address
-  - [ ] Check deposit panel shows balances from Sepolia
-  - [ ] Test deposit ETH to vault
-  - [ ] Test deposit USDT with permit
-  - [ ] Check transaction on Etherscan
-  - [ ] Verify events indexed by Ponder
-  - [ ] Test invest/divest functions (if implemented)
+- [ ] 3. Update AIPanel.tsx
+  - [ ] Display strategy suggestions when returned
+  - [ ] Support "invest" and "divest" as AI-driven actions
+  - [ ] Example: User types "should I invest my USDT?" → AI responds with suggestion + one-click invest button
 
-**Milestone**: ✅ All contracts deployed to Sepolia, verified on Etherscan, frontend working
+- [ ] 4. Test AI strategy flow
+  - [ ] "invest 500 USDT in Aave" → parses intent, fills invest form
+  - [ ] "check my yield" → shows current Aave balance and earnings
+  - [ ] "should I invest?" → AI gives suggestion based on idle balance
 
-**Files Modified:**
-- `script/Deploy.s.sol` - NEW FILE - Deployment script
-- `foundry.toml` - Add Sepolia configuration
-- `frontend/lib/wagmi.ts` - Update for Sepolia
-- `frontend/lib/vault.ts` - Update contract addresses
-- `frontend/.env.local` - NEW FILE - Environment variables
+**Milestone**: Dify upgrades from "risk assessment" to "strategy advisor" — user can ask "should I invest?" and get actionable advice
+
+**Files to Modify:**
+- `app/api/chat/route.ts` - Add strategy intents and suggestions
+- `components/AIPanel.tsx` - Display strategy suggestions and invest actions
 
 ---
 
@@ -1327,31 +1346,29 @@ Sepolia Solution:
 
 At the end of Day 4, verify:
 
-1. **EIP-2612 Permit Verification**:
-   - [ ] User can deposit USDT without prior approval
-   - [ ] Single MetaMask popup for signature + transaction
-   - [ ] Balance updates correctly
+1. **EIP-2612 Permit** (Mission N - Done):
+   - [ ] User deposits USDT without prior approval (one-click)
    - [ ] Fallback to two-step flow works if permit fails
 
-2. **Strategy Pattern Verification**:
-   - [ ] AaveStrategy deployed and initialized
-   - [ ] invest() deposits funds to Aave (or mock)
-   - [ ] divest() withdraws funds from Aave
-   - [ ] getTotalBalance() includes strategy funds
-   - [ ] Strategy failures don't revert vault
+2. **Strategy Pattern** (Mission O):
+   - [ ] AaveStrategy deployed with MockAavePool on Anvil
+   - [ ] `invest()` moves USDT from vault → strategy → pool
+   - [ ] `divest()` moves USDT back
+   - [ ] `getTotalBalance()` includes strategy funds
+   - [ ] try/catch: strategy failure does NOT revert vault operations
 
-3. **Ponder Indexing Verification**:
-   - [ ] Ponder indexes deposit events in <1 second
-   - [ ] GraphQL API returns deposit history
-   - [ ] Query by address works
-   - [ ] Recent deposits query works
+3. **Ponder Indexing** (Mission P):
+   - [ ] Ponder container running, indexing `TokenDeposited` events
+   - [ ] GraphQL query returns deposit you just made
 
-4. **Sepolia Deployment Verification**:
-   - [ ] All contracts deployed to Sepolia
-   - [ ] Contracts verified on Etherscan
-   - [ ] Frontend connects to Sepolia RPC
-   - [ ] Test transactions successful
-   - [ ] Events visible on Etherscan
+4. **Sepolia Deployment** (Mission Q):
+   - [ ] Contracts verified on Etherscan (source code visible)
+   - [ ] Frontend works on Sepolia (deposit, withdraw, permit all functional)
+   - [ ] Strategy connects to real Aave V3 on Sepolia
+
+5. **AI Strategy Advisory** (Mission R):
+   - [ ] Dify can parse "invest" and "check yield" intents
+   - [ ] AI gives strategy suggestions based on idle vault balance
 
 ---
 
@@ -1362,74 +1379,81 @@ At the end of Day 4, verify:
 - **Benefit**: Better UX, lower gas costs
 - **Implementation**: Off-chain permit signature + on-chain execution
 
-### 2. Strategy Pattern
-- **Principle**: Decouple vault from yield protocols
-- **Benefit**: Switch strategies without upgrading vault
-- **Implementation**: Interface + Implementation + Vault integration
+### 2. Strategy Pattern (Decoupled Yield)
+- **Principle**: Decouple vault from yield protocols via interface
+- **Benefit**: Switch strategies (Aave → Compound → Lido) without upgrading vault
+- **Safety**: try/catch isolates external protocol failures from vault
+- **Permissions**: Only Vault calls Strategy (onlyVault), only Treasurer triggers invest/divest
 
-### 3. Event Indexing
-- **Principle**: Transform cold data to hot data
-- **Benefit**: Instant queries, no RPC polling
-- **Implementation**: Ponder listens to events, stores in database
+### 3. Event Indexing (Cold → Hot Data)
+- **Principle**: Transform blockchain events to instantly queryable data
+- **Benefit**: No more slow RPC polling; structured data for analytics
+- **Implementation**: Ponder listens to events, stores in DB, serves via GraphQL
 
 ### 4. Progressive Deployment
-- **Principle**: Anvil → Sepolia → Mainnet
+- **Principle**: Anvil (mock) → Sepolia (real testnet) → Mainnet
 - **Benefit**: Test in increasingly realistic environments
-- **Implementation**: Same contracts, different networks
+- **Implementation**: Same contracts, env-based network switching
+
+### 5. AI-Driven DeFi Advisory
+- **Principle**: AI layer evolves from risk gatekeeper to strategy advisor
+- **Benefit**: Users get actionable yield suggestions, not just warnings
+- **Implementation**: Dify parses strategy intents, API enriches with on-chain data
 
 ---
 
 ## Coach's Tips
 
-### About EIP-2612 Permit
-- Test permit signature generation with MockERC20 first
-- Use viem's `signTypedData` for EIP-712 signatures
-- Handle signature failures gracefully (fallback to two-step)
-- Verify deadline is reasonable (1 hour default)
-
 ### About Strategy Pattern
-- Use try/catch for all external protocol calls
-- Only vault should call strategy functions
+- Use try/catch for ALL external protocol calls — this is non-negotiable
+- Only vault should call strategy functions (onlyVault modifier)
+- MockAavePool is like MockERC20 — a test stand-in for local development
+- On Sepolia, point to real Aave V3 Pool: `0x6Ae43d3271ff6888e7Fc43Fd7321a503ff738951`
 - Emergency withdraw for owner in crisis
-- Test with mock addresses before real Aave
 
 ### About Ponder Indexing
-- Start with SQLite for development
-- Only index essential events (TokenDeposited, Deposited)
-- Use GraphQL for complex queries
-- Keep schema simple (single entity)
+- Keep it minimal: one entity, one handler, <30 lines
+- Ponder uses TypeScript — leverage your 10 years of frontend experience
+- Start local, then point to Sepolia RPC when deployed
+- GraphQL is auto-generated — no extra work needed
 
 ### About Sepolia Deployment
-- Use dedicated testnet wallet (never mainnet keys)
-- Get testnet ETH from multiple faucets
-- Verify contracts immediately after deployment
-- Save all deployed addresses in documentation
+- Use dedicated testnet wallet (NEVER mainnet keys)
+- Get testnet ETH from multiple faucets (they can be unreliable)
+- If `--verify` fails, use `forge verify-contract` separately
+- Save all deployed addresses — you'll need them for frontend and Ponder config
+- Use `.env` for chain switching, don't hardcode addresses
+
+### About AI Strategy Advisory
+- Build on existing Dify + API route architecture
+- Add "invest/divest/check_yield" to the intent schema
+- Suggestions should be informational, not auto-executing (user confirms)
 
 ---
 
 ## Next Action
 
-**Current**: Day 3 completed with full security governance architecture
+**Current**: Mission N (EIP-2612 Permit) completed
 
 **Completed Missions:**
-- ✅ Mission I: Access Control Upgrade (SoD Architecture)
-- ✅ Mission J: Pausable Circuit Breaker
-- ✅ Mission K: AI Risk Assessment
-- ✅ Mission L: Pre-execution Safety
+- ✅ Mission N: EIP-2612 Permit (Intent-Based Interactions)
 
-**Recommended Next**: Mission M - EIP-2612 Permit Integration (Day 4, Session 1)
+**Remaining Missions:**
+- Mission O: Aave Strategy Architecture (Strategy Pattern)
+- Mission P: Minimal Ponder Indexing (Data Layer)
+- Mission Q: Sepolia Testnet Deployment (Full-Stack)
+- Mission R: AI Strategy Advisory (AI Layer Upgrade)
 
-**Day 4 Goals:**
-- Master intent-based interactions (EIP-2612)
-- Implement Strategy Pattern for yield generation
-- Add Ponder indexing for instant queries
-- Deploy to Sepolia testnet
+**Recommended Order**: O → P → Q → R
+- O first: Strategy contracts need to exist before deploying to Sepolia
+- P second: Set up indexing locally while contracts are fresh
+- Q third: Deploy everything to Sepolia (real network)
+- R last: AI upgrade builds on top of everything
 
-**Key Achievement:**
-After Day 4, you'll have a complete DeFi vault protocol:
-- One-click deposits with permit
-- Yield generation through Aave
-- Instant data queries with Ponder
-- Production-ready on Sepolia
-
-This creates a professional-grade DeFi protocol ready for mainnet deployment (future milestone).
+**Key Achievement after Day 4:**
+Complete "Deposit → Invest → Monitor" loop:
+- One-click deposits with permit (N)
+- Yield generation through Aave strategy (O)
+- Instant data queries with Ponder (P)
+- Production-ready on Sepolia with verified contracts (Q)
+- AI-powered strategy advisory (R)
