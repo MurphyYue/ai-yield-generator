@@ -34,6 +34,13 @@ export const VAULT_ABI = parseAbi([
   'function withdrawalFee() external view returns (uint256)',
   'function getWithdrawalRequestHash(address user, uint256 amount) external view returns (bytes32)',
   'function largeWithdrawalApproved(bytes32) external view returns (bool)',
+  // Day 4: Strategy functions
+  'function setStrategy(address _strategy) external',
+  'function invest(address token, uint256 amount) external',
+  'function divest(uint256 amount) external',
+  'function emergencyDivest() external',
+  'function getTotalBalance(address token) external view returns (uint256)',
+  'function strategy() external view returns (address)',
   // Events
   'event Deposited(address indexed user, uint256 amount)',
   'event Withdrawn(address indexed user, uint256 amount, uint256 fee)',

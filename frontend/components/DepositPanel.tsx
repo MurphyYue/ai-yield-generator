@@ -191,108 +191,75 @@ export function DepositPanel({ intent }: DepositPanelProps) {
   const isSuccess = isDepositSuccess || isDepositTokenSuccess || isDepositWithPermitSuccess || isApproveSuccess
 
   return (
-    <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-lg border border-gray-200 dark:border-gray-700">
-      <div className="flex items-center justify-between mb-4">
-        <h2 className="text-xl font-bold text-gray-900 dark:text-white">
-          Deposit {selectedToken}
-        </h2>
+    <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '0.875rem' }}>
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <span style={{ fontWeight: 700, fontSize: '0.95rem', letterSpacing: '-0.01em', color: 'var(--cyan)' }}>
+          ↓ Deposit
+        </span>
         {intent && intent.action === 'deposit' && (
-          <span className="text-xs px-3 py-1 bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 rounded-full">
-            AI Parsed
+          <span style={{
+            fontSize: '0.6rem', fontWeight: 600, letterSpacing: '0.08em',
+            color: 'var(--cyan)', background: 'var(--cyan-dim)',
+            border: '1px solid var(--cyan-glow)', padding: '2px 7px', borderRadius: 4,
+          }}>
+            AI PARSED
           </span>
         )}
       </div>
 
       {/* Token Selector */}
-      <TokenSelector
-        selectedToken={selectedToken}
-        onTokenChange={setSelectedToken}
-        disabled={isLoading}
-      />
+      <TokenSelector selectedToken={selectedToken} onTokenChange={setSelectedToken} disabled={isLoading} />
 
-      {/* Show AI intent info */}
+      {/* AI suggestion mismatch */}
       {intent && intent.action === 'deposit' && intent.token !== selectedToken && (
-        <div className="mb-3 p-2 bg-amber-50 dark:bg-amber-900/20 rounded-lg text-sm text-gray-600 dark:text-gray-400">
+        <div className="alert-amber" style={{ fontSize: '0.7rem' }}>
           AI suggested: Deposit {intent.amount} {intent.token}
         </div>
       )}
 
-      {/* USDT Allowance Warning */}
+      {/* Permit notice */}
       {selectedToken === 'USDT' && (
-        <div className="mb-4 p-3 bg-green-50 dark:bg-green-900/20 rounded-lg">
-          <p className="text-sm text-green-800 dark:text-green-300">
-            <span className="font-semibold">✨ One-Click Deposit:</span> Gasless signature + single transaction
-          </p>
-          <p className="text-xs text-green-700 dark:text-green-400 mt-1">
-            Current allowance: {usdtAllowanceFormatted} USDT
-          </p>
+        <div className="alert-cyan" style={{ fontSize: '0.7rem' }}>
+          <span style={{ fontWeight: 600 }}>✦ One-Click Deposit</span> — gasless permit signature, single transaction.
+          Allowance: <span style={{ fontFamily: "'JetBrains Mono', monospace" }}>{usdtAllowanceFormatted} USDT</span>
         </div>
       )}
 
-      {/* Simulation Error Display */}
-      {error && (
-        <div className="mb-4 p-3 bg-red-100 dark:bg-red-900 rounded-lg">
-          <p className="text-sm text-red-800 dark:text-red-300">
-            <span className="font-semibold">⚠️ Simulation Failed:</span> {error}
-          </p>
-          <p className="text-xs text-red-700 dark:text-red-400 mt-1">
-            Please fix the error before proceeding.
-          </p>
-        </div>
-      )}
+      {/* Simulation error */}
+      {error && <div className="alert-red" style={{ fontSize: '0.75rem' }}>⚠ {error}</div>}
 
-      {/* Balance Display */}
-      <div className="mb-4">
-        <p className="text-sm text-gray-500 dark:text-gray-400">
-          Available:{' '}
-          <span className="font-semibold text-gray-900 dark:text-white">
-            {getAvailableBalance()} {selectedToken}
-          </span>
-        </p>
-        <p className="text-sm text-gray-500 dark:text-gray-400">
-          Vault Balance:{' '}
-          <span className="font-semibold text-gray-900 dark:text-white">
-            {getVaultBalance()} {selectedToken}
-          </span>
-        </p>
+      {/* Balances */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', color: 'var(--text-2)' }}>
+        <span>Available: <span style={{ fontFamily: "'JetBrains Mono', monospace", color: 'var(--text-1)' }}>{getAvailableBalance()} {selectedToken}</span></span>
+        <span>In vault: <span style={{ fontFamily: "'JetBrains Mono', monospace", color: 'var(--cyan)' }}>{getVaultBalance()} {selectedToken}</span></span>
       </div>
 
+      {/* Amount input */}
       <input
+        className="vault-input"
         type="number"
         value={amount}
-        onChange={(e) => setAmount(e.target.value)}
-        placeholder={`Amount in ${selectedToken}`}
+        onChange={e => setAmount(e.target.value)}
+        placeholder={`Amount (${selectedToken})`}
         step="0.000001"
         min="0"
         max={getMaxAmount()}
-        className="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 mb-4"
       />
 
+      {/* Action button */}
       <button
+        className="btn btn-cyan"
+        style={{ width: '100%', padding: '0.7rem' }}
         onClick={handleDeposit}
         disabled={isLoading || isSimulating || !amount || parseFloat(amount) <= 0}
-        className="w-full px-6 py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-white font-semibold rounded-lg transition-colors"
       >
-        {isSimulating
-          ? 'Checking...'
-          : isLoading
-          ? isApproving
-            ? 'Approving...'
-            : 'Depositing...'
-          : selectedToken === 'USDT'
-          ? `One-Click Deposit ${amount || '0'} ${selectedToken}`
-          : `Deposit ${amount || '0'} ${selectedToken}`
-        }
+        {isSimulating ? 'Checking…' : isLoading ? (isApproving ? 'Approving…' : 'Depositing…') : selectedToken === 'USDT' ? `One-Click Deposit ${amount || '0'} USDT` : `Deposit ${amount || '0'} ETH`}
       </button>
 
       {isSuccess && (
-        <div className="mt-4 p-3 bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300 rounded-lg text-sm">
-          {isDepositWithPermitSuccess
-            ? `✨ One-Click deposit successful! Your balance has been updated.`
-            : isApproveSuccess
-            ? `Approved! You can now deposit ${amount} ${selectedToken}`
-            : `Deposit successful! Your balance has been updated.`
-          }
+        <div className="alert-green" style={{ fontSize: '0.75rem' }}>
+          {isDepositWithPermitSuccess ? '✦ One-click deposit complete.' : isApproveSuccess ? `Approved. You can now deposit ${amount} ${selectedToken}.` : 'Deposit complete.'}
         </div>
       )}
     </div>

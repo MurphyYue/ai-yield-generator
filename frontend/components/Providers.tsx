@@ -5,7 +5,8 @@ import { WagmiProvider } from 'wagmi'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { config } from '@/lib/wagmi'
 import '@rainbow-me/rainbowkit/styles.css'
-import { RainbowKitProvider, ConnectButton } from '@rainbow-me/rainbowkit'
+import { RainbowKitProvider } from '@rainbow-me/rainbowkit'
+import { ThemeProvider } from 'next-themes'
 
 interface ProvidersProps {
   children: ReactNode
@@ -18,7 +19,6 @@ export function Providers({ children }: ProvidersProps) {
     setMounted(true)
   }, [])
 
-  // On server or before mount, show loading
   if (!mounted) {
     return (
       <div style={{
@@ -35,20 +35,14 @@ export function Providers({ children }: ProvidersProps) {
   }
 
   return (
-    <WagmiProvider config={config}>
-      <QueryClientProvider client={new QueryClient()}>
-        <RainbowKitProvider>
-          <div style={{
-            position: 'fixed',
-            top: '16px',
-            right: '16px',
-            zIndex: 1000
-          }}>
-            <ConnectButton />
-          </div>
-          {children}
-        </RainbowKitProvider>
-      </QueryClientProvider>
-    </WagmiProvider>
+    <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
+      <WagmiProvider config={config}>
+        <QueryClientProvider client={new QueryClient()}>
+          <RainbowKitProvider>
+            {children}
+          </RainbowKitProvider>
+        </QueryClientProvider>
+      </WagmiProvider>
+    </ThemeProvider>
   )
 }

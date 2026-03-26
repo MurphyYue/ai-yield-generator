@@ -433,6 +433,53 @@ export function useVault() {
     })
   }, [writeUnpause])
 
+  // ============ Day 4: Strategy Functions ============
+
+  // Strategy balance: total USDT under management (vault + Aave)
+  const { data: totalStrategyBalance } = useReadContract({
+    address: VAULT_ADDRESS,
+    abi: VAULT_ABI,
+    functionName: 'getTotalBalance',
+    args: [MOCK_USDT_ADDRESS],
+    query: { enabled: !!address },
+  })
+
+  // Invest (Treasurer only)
+  const { writeContract: writeInvest, data: investHash } = useWriteContract()
+  const { isLoading: isInvesting, isSuccess: isInvestSuccess } = useWaitForTransactionReceipt({
+    hash: investHash,
+  })
+
+  const invest = useCallback(
+    (amount: string) => {
+      writeInvest({
+        address: VAULT_ADDRESS,
+        abi: VAULT_ABI,
+        functionName: 'invest',
+        args: [MOCK_USDT_ADDRESS, parseUnits(amount, 6)],
+      })
+    },
+    [writeInvest]
+  )
+
+  // Divest (Treasurer only)
+  const { writeContract: writeDivest, data: divestHash } = useWriteContract()
+  const { isLoading: isDivesting, isSuccess: isDivestSuccess } = useWaitForTransactionReceipt({
+    hash: divestHash,
+  })
+
+  const divest = useCallback(
+    (amount: string) => {
+      writeDivest({
+        address: VAULT_ADDRESS,
+        abi: VAULT_ABI,
+        functionName: 'divest',
+        args: [parseUnits(amount, 6)],
+      })
+    },
+    [writeDivest]
+  )
+
   return {
     // ETH Balances
     ethBalance: ethBalance?.value ?? BigInt(0),
@@ -509,5 +556,17 @@ export function useVault() {
     isUnpauseSuccess,
     pauseHash,
     unpauseHash,
+
+    // Day 4: Strategy functions
+    invest,
+    divest,
+    isInvesting,
+    isDivesting,
+    isInvestSuccess,
+    isDivestSuccess,
+    investHash,
+    divestHash,
+    totalStrategyBalance: totalStrategyBalance ?? BigInt(0),
+    totalStrategyBalanceFormatted: totalStrategyBalance ? formatUnits(totalStrategyBalance, 6) : '0',
   }
 }

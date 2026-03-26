@@ -121,101 +121,82 @@ export function WithdrawPanel({ intent }: WithdrawPanelProps) {
   const isSuccess = isWithdrawSuccess || isWithdrawTokenSuccess
 
   return (
-    <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-lg border border-gray-200 dark:border-gray-700">
-      <div className="flex items-center justify-between mb-4">
-        <h2 className="text-xl font-bold text-gray-900 dark:text-white">
-          Withdraw {selectedToken}
-        </h2>
+    <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '0.875rem' }}>
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <span style={{ fontWeight: 700, fontSize: '0.95rem', letterSpacing: '-0.01em', color: 'var(--purple)' }}>
+          ↑ Withdraw
+        </span>
         {intent && intent.action === 'withdraw' && (
-          <span className="text-xs px-3 py-1 bg-purple-100 dark:bg-purple-900 text-purple-700 dark:text-purple-300 rounded-full">
-            AI Parsed
+          <span style={{
+            fontSize: '0.6rem', fontWeight: 600, letterSpacing: '0.08em',
+            color: 'var(--purple)', background: 'rgba(167,139,250,0.08)',
+            border: '1px solid rgba(167,139,250,0.25)', padding: '2px 7px', borderRadius: 4,
+          }}>
+            AI PARSED
           </span>
         )}
       </div>
 
       {/* Token Selector */}
-      <TokenSelector
-        selectedToken={selectedToken}
-        onTokenChange={setSelectedToken}
-        disabled={isLoading}
-      />
+      <TokenSelector selectedToken={selectedToken} onTokenChange={setSelectedToken} disabled={isLoading} />
 
-      {/* Show AI intent info */}
+      {/* AI suggestion mismatch */}
       {intent && intent.action === 'withdraw' && intent.token !== selectedToken && (
-        <div className="mb-3 p-2 bg-amber-50 dark:bg-amber-900/20 rounded-lg text-sm text-gray-600 dark:text-gray-400">
+        <div className="alert-amber" style={{ fontSize: '0.7rem' }}>
           AI suggested: Withdraw {intent.amount} {intent.token}
         </div>
       )}
 
-      {/* Simulation Error Display */}
-      {error && (
-        <div className="mb-4 p-3 bg-red-100 dark:bg-red-900 rounded-lg">
-          <p className="text-sm text-red-800 dark:text-red-300">
-            <span className="font-semibold">⚠️ Simulation Failed:</span> {error}
-          </p>
-          <p className="text-xs text-red-700 dark:text-red-400 mt-1">
-            Please fix the error before proceeding.
-          </p>
-        </div>
-      )}
+      {/* Simulation error */}
+      {error && <div className="alert-red" style={{ fontSize: '0.75rem' }}>⚠ {error}</div>}
 
-      {/* Balance Display */}
-      <div className="mb-4">
-        <p className="text-sm text-gray-500 dark:text-gray-400 mb-1">
-          Wallet Balance:{' '}
-          <span className="font-semibold text-gray-900 dark:text-white">
-            {getWalletBalance()} {selectedToken}
-          </span>
-        </p>
-        <p className="text-sm text-gray-500 dark:text-gray-400 mb-2">
-          Available in Vault:{' '}
-          <span className="font-semibold text-gray-900 dark:text-white">
-            {getVaultBalance()} {selectedToken}
-          </span>
-        </p>
+      {/* Balances + Max */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.7rem', color: 'var(--text-2)' }}>
+        <span>In vault: <span style={{ fontFamily: "'JetBrains Mono', monospace", color: 'var(--purple)' }}>{getVaultBalance()} {selectedToken}</span></span>
         <button
           onClick={handleSetMax}
-          className="text-xs text-blue-600 hover:text-blue-700 dark:text-blue-400"
           disabled={isLoading}
+          style={{
+            fontSize: '0.65rem', fontWeight: 600, letterSpacing: '0.06em',
+            color: 'var(--text-2)', background: 'var(--surface-3)',
+            border: '1px solid var(--border)', borderRadius: 4,
+            padding: '2px 8px', cursor: 'pointer',
+          }}
         >
-          Set Max
+          MAX
         </button>
       </div>
 
+      {/* Amount input */}
       <input
+        className="vault-input"
         type="number"
         value={amount}
-        onChange={(e) => setAmount(e.target.value)}
-        placeholder={`Amount in ${selectedToken}`}
+        onChange={e => setAmount(e.target.value)}
+        placeholder={`Amount (${selectedToken})`}
         step="0.000001"
         min="0"
         max={getMaxAmount()}
-        className="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 mb-4"
       />
 
+      {/* Action button */}
       <button
+        className="btn"
+        style={{
+          width: '100%', padding: '0.7rem',
+          background: 'rgba(167,139,250,0.1)',
+          color: 'var(--purple)',
+          border: '1px solid rgba(167,139,250,0.25)',
+        }}
         onClick={handleWithdraw}
-        disabled={
-          isLoading ||
-          isSimulating ||
-          !amount ||
-          parseFloat(amount) <= 0 ||
-          parseFloat(amount) > parseFloat(getMaxAmount())
-        }
-        className="w-full px-6 py-3 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-white font-semibold rounded-lg transition-colors"
+        disabled={isLoading || isSimulating || !amount || parseFloat(amount) <= 0 || parseFloat(amount) > parseFloat(getMaxAmount())}
       >
-        {isSimulating
-          ? 'Checking...'
-          : isLoading
-          ? 'Withdrawing...'
-          : `Withdraw ${amount || '0'} ${selectedToken}`
-        }
+        {isSimulating ? 'Checking…' : isLoading ? 'Withdrawing…' : `Withdraw ${amount || '0'} ${selectedToken}`}
       </button>
 
       {isSuccess && (
-        <div className="mt-4 p-3 bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300 rounded-lg text-sm">
-          Withdrawal successful! Your balance has been updated.
-        </div>
+        <div className="alert-green" style={{ fontSize: '0.75rem' }}>Withdrawal complete.</div>
       )}
     </div>
   )

@@ -8,106 +8,185 @@ export function AdminPanel() {
   const { address } = useAccount()
   const {
     isPaused,
-    pause,
-    unpause,
-    isPausing,
-    isUnpausing,
-    isPauseSuccess,
-    isUnpauseSuccess,
+    pause, unpause,
+    isPausing, isUnpausing,
+    isPauseSuccess, isUnpauseSuccess,
+    invest, divest,
+    isInvesting, isDivesting,
+    isInvestSuccess, isDivestSuccess,
+    vaultUsdtBalanceFormatted,
+    totalStrategyBalanceFormatted,
   } = useVault()
 
-  const [showManagerOnly, setShowManagerOnly] = useState(false)
+  const [investAmount, setInvestAmount] = useState('')
+  const [divestAmount, setDivestAmount] = useState('')
 
   useEffect(() => {
     if (isPauseSuccess || isUnpauseSuccess) {
-      const timer = setTimeout(() => {
-        window.location.reload()
-      }, 2000)
-      return () => clearTimeout(timer)
+      const t = setTimeout(() => window.location.reload(), 2000)
+      return () => clearTimeout(t)
     }
   }, [isPauseSuccess, isUnpauseSuccess])
 
-  const handlePause = async () => {
-    try {
-      await pause()
-    } catch (error) {
-      console.error('Pause failed:', error)
-      alert('Failed to pause contract. You may not have MANAGER_ROLE.')
-    }
-  }
-
-  const handleUnpause = async () => {
-    try {
-      await unpause()
-    } catch (error) {
-      console.error('Unpause failed:', error)
-      alert('Failed to unpause contract. You may not have MANAGER_ROLE.')
-    }
-  }
+  const short = address ? `${address.slice(0, 6)}…${address.slice(-4)}` : '—'
 
   return (
-    <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-lg border border-gray-200 dark:border-gray-700">
-      <div className="flex items-center justify-between mb-4">
-        <h2 className="text-xl font-bold text-gray-900 dark:text-white">
-          Admin Panel
-        </h2>
-        <div className="flex items-center gap-2">
-          <div className={`w-3 h-3 rounded-full ${isPaused ? 'bg-red-500' : 'bg-green-500'}`} />
-          <span className="text-sm text-gray-600 dark:text-gray-300">
-            {isPaused ? 'PAUSED' : 'ACTIVE'}
-          </span>
+    <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <span style={{ fontWeight: 700, fontSize: '0.95rem', letterSpacing: '-0.01em' }}>
+          Admin
+        </span>
+        <span style={{
+          display: 'flex', alignItems: 'center', gap: 5,
+          fontSize: '0.65rem', fontWeight: 600, letterSpacing: '0.08em',
+          color: isPaused ? 'var(--red)' : 'var(--green)',
+          background: isPaused ? 'var(--red-dim)' : 'var(--green-dim)',
+          border: `1px solid ${isPaused ? 'rgba(248,113,113,0.2)' : 'rgba(52,211,153,0.2)'}`,
+          padding: '3px 8px', borderRadius: 5,
+        }}>
+          <span style={{ fontSize: 8 }}>●</span>
+          {isPaused ? 'PAUSED' : 'ACTIVE'}
+        </span>
+      </div>
+
+      {/* Connected address */}
+      <div style={{
+        background: 'var(--surface-3)', border: '1px solid var(--border)',
+        borderRadius: 8, padding: '0.625rem 0.875rem',
+      }}>
+        <div style={{ fontSize: '0.6rem', fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-3)', marginBottom: 3 }}>
+          Connected
+        </div>
+        <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.75rem', color: 'var(--text-2)' }}>
+          {short}
         </div>
       </div>
 
-      <div className="mb-4 p-4 bg-gray-50 dark:bg-gray-700 rounded-lg">
-        <p className="text-sm text-gray-600 dark:text-gray-300 mb-2">
-          <span className="font-semibold">Connected Address:</span>
-        </p>
-        <p className="text-xs text-gray-500 dark:text-gray-400 font-mono break-all">
-          {address || 'Not connected'}
-        </p>
-      </div>
-
+      {/* Paused warning */}
       {isPaused && (
-        <div className="mb-4 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
-          <p className="text-sm text-red-800 dark:text-red-300">
-            <span className="font-semibold">⚠️ System Paused</span>
-          </p>
-          <p className="text-xs text-red-700 dark:text-red-400 mt-1">
-            All deposit and withdraw operations are currently suspended.
-          </p>
+        <div className="alert-red">
+          All deposit and withdraw operations suspended.
         </div>
       )}
 
-      <div className="space-y-3">
+      {/* Pause / Resume */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <div className="section-label">Circuit Breaker</div>
         {!isPaused ? (
           <button
-            onClick={handlePause}
+            className="btn btn-red"
+            style={{ width: '100%' }}
+            onClick={() => pause()}
             disabled={isPausing || isUnpausing}
-            className="w-full px-6 py-3 bg-red-600 hover:bg-red-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-semibold rounded-lg transition-colors"
           >
-            {isPausing ? 'Pausing...' : 'Pause System'}
+            {isPausing ? 'Pausing…' : '⏸ Pause System'}
           </button>
         ) : (
           <button
-            onClick={handleUnpause}
+            className="btn btn-green"
+            style={{ width: '100%' }}
+            onClick={() => unpause()}
             disabled={isUnpausing || isPausing}
-            className="w-full px-6 py-3 bg-green-600 hover:bg-green-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-semibold rounded-lg transition-colors"
           >
-            {isUnpausing ? 'Unpausing...' : 'Resume System'}
+            {isUnpausing ? 'Resuming…' : '▶ Resume System'}
           </button>
         )}
-
-        <div className="text-xs text-gray-500 dark:text-gray-400 text-center">
-          Only accounts with MANAGER_ROLE can pause/unpause the system.
+        {(isPauseSuccess || isUnpauseSuccess) && (
+          <div className="alert-green" style={{ marginTop: 4 }}>
+            {isPauseSuccess ? 'System paused.' : 'System resumed.'}
+          </div>
+        )}
+        <div style={{ fontSize: '0.65rem', color: 'var(--text-3)', textAlign: 'center' }}>
+          Requires MANAGER_ROLE
         </div>
       </div>
 
-      {(isPauseSuccess || isUnpauseSuccess) && (
-        <div className="mt-4 p-3 bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300 rounded-lg text-sm">
-          {isPauseSuccess ? 'System paused successfully!' : 'System resumed successfully!'}
+      <hr className="divider" />
+
+      {/* Strategy section */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <div className="section-label">Aave Strategy</div>
+
+        {/* Balance overview */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+          <div style={{
+            background: 'var(--surface-3)', border: '1px solid var(--border)',
+            borderRadius: 8, padding: '0.625rem',
+          }}>
+            <div style={{ fontSize: '0.6rem', color: 'var(--text-3)', marginBottom: 2, letterSpacing: '0.08em', textTransform: 'uppercase', fontWeight: 600 }}>Vault</div>
+            <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.9rem', fontWeight: 500, color: 'var(--green)' }}>
+              {parseFloat(vaultUsdtBalanceFormatted).toFixed(2)}
+            </div>
+            <div style={{ fontSize: '0.6rem', color: 'var(--text-3)', marginTop: 1 }}>USDT</div>
+          </div>
+          <div style={{
+            background: 'var(--surface-3)', border: '1px solid var(--border)',
+            borderRadius: 8, padding: '0.625rem',
+          }}>
+            <div style={{ fontSize: '0.6rem', color: 'var(--text-3)', marginBottom: 2, letterSpacing: '0.08em', textTransform: 'uppercase', fontWeight: 600 }}>In Aave</div>
+            <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.9rem', fontWeight: 500, color: 'var(--purple)' }}>
+              {parseFloat(totalStrategyBalanceFormatted).toFixed(2)}
+            </div>
+            <div style={{ fontSize: '0.6rem', color: 'var(--text-3)', marginTop: 1 }}>USDT</div>
+          </div>
         </div>
-      )}
+
+        {/* Invest */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+          <div style={{ fontSize: '0.7rem', color: 'var(--text-2)', fontWeight: 500 }}>Invest into Aave</div>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <input
+              className="vault-input"
+              style={{ flex: 1 }}
+              type="number"
+              placeholder="USDT amount"
+              value={investAmount}
+              onChange={e => setInvestAmount(e.target.value)}
+            />
+            <button
+              className="btn btn-cyan"
+              onClick={() => { if (investAmount) { invest(investAmount); setInvestAmount('') } }}
+              disabled={isInvesting || !investAmount}
+            >
+              {isInvesting ? '…' : 'Invest'}
+            </button>
+          </div>
+        </div>
+
+        {/* Divest */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+          <div style={{ fontSize: '0.7rem', color: 'var(--text-2)', fontWeight: 500 }}>Divest from Aave</div>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <input
+              className="vault-input"
+              style={{ flex: 1 }}
+              type="number"
+              placeholder="USDT amount"
+              value={divestAmount}
+              onChange={e => setDivestAmount(e.target.value)}
+            />
+            <button
+              className="btn btn-amber"
+              onClick={() => { if (divestAmount) { divest(divestAmount); setDivestAmount('') } }}
+              disabled={isDivesting || !divestAmount}
+            >
+              {isDivesting ? '…' : 'Divest'}
+            </button>
+          </div>
+        </div>
+
+        {(isInvestSuccess || isDivestSuccess) && (
+          <div className="alert-green">
+            {isInvestSuccess ? 'USDT invested into Aave.' : 'USDT divested from Aave.'}
+          </div>
+        )}
+
+        <div style={{ fontSize: '0.65rem', color: 'var(--text-3)', textAlign: 'center' }}>
+          Requires TREASURER_ROLE
+        </div>
+      </div>
     </div>
   )
 }
