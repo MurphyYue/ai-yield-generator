@@ -55,7 +55,7 @@ export const VAULT_ABI = parseAbi([
 ])
 
 // VaultV3 Contract Address (Day 4 - Deployed with EIP-2612 Permit)
-export const VAULT_ADDRESS = '0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512' as const
+export const VAULT_ADDRESS = '0x3Aa5ebB10DC797CAC828524e59A333d0A371443c' as const
 
 // MockUSDT (ERC20 Token) ABI
 export const ERC20_ABI = parseAbi([
@@ -93,4 +93,4 @@ export const ERC20_PERMIT_ABI = parseAbi([
 ])
 
 // MockUSDT Token Address (Day 4 - Deployed with ERC20Permit)
-export const MOCK_USDT_ADDRESS = '0x5FbDB2315678afecb367f032d93F642f64180aa3' as const
+export const MOCK_USDT_ADDRESS = '0x68B1D87F95878fE05B998F19b66F4baba5De1aed' as const

@@ -195,9 +195,7 @@ export function useVault() {
   })
 
   // Read USDT balance
-  const { data: usdtBalance, refetch: refetchUsdtBalance, error,
-    isLoading,
-    isError } = useReadContract({
+  const { data: usdtBalance, refetch: refetchUsdtBalance } = useReadContract({
     address: MOCK_USDT_ADDRESS,
     abi: ERC20_PERMIT_ABI,
     functionName: 'balanceOf',
@@ -207,15 +205,6 @@ export function useVault() {
     },
   })
 
-
-  // 这样打印能看到灵魂深处的原因
-  console.log('--- Debug USDT Balance ---');
-  console.log('Address Connected:', address);
-  console.log('Target Contract:', MOCK_USDT_ADDRESS);
-  console.log('Is Loading:', isLoading);
-  console.log('Is Error:', isError);
-  console.log('Error Details:', error);
-  console.log('Final Data:', usdtBalance);
 
   // Read vault USDT balance
   const { data: vaultUsdtBalance, refetch: refetchVaultUsdtBalance } = useReadContract({
