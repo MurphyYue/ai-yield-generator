@@ -1166,33 +1166,28 @@ Ponder Solution:
 
 **Implementation Tasks:**
 
-- [ ] 1. Initialize Ponder project
-  - [ ] Run `pnpm create ponder` in project root (follow prompts, select existing ABI)
-  - [ ] Copy VaultV3 ABI JSON to the ponder project's `abis/` directory
+- [x] 1. Initialize Ponder project
+  - [x] Run `pnpm create ponder` in project root (follow prompts, select existing ABI)
+  - [x] Copy VaultV3 ABI JSON to the ponder project's `abis/` directory
 
-- [ ] 2. Configure `ponder.config.ts`
-  - [ ] Set network: Anvil local (chainId 31337, rpcUrl `http://localhost:8545`)
-  - [ ] Set contract: VaultV3 address + ABI
-  - [ ] Note: When switching to Sepolia later, just change network config
+- [x] 2. Configure `ponder.config.ts`
+  - [x] Set network: Anvil local (chainId 31337, rpcUrl `http://localhost:8545`)
+  - [x] Set contract: VaultV3 address + ABI
+  - [x] Note: When switching to Sepolia later, just change network config
 
-- [ ] 3. Define schema in `ponder.schema.ts`
-  - [ ] Define ONE entity: `DepositHistory`
-    ```typescript
-    // Fields: id, sender, amount, token, tokenSymbol, timestamp, blockNumber, transactionHash
-    ```
+- [x] 3. Define schema in `ponder.schema.ts`
+  - [x] Define ONE entity: `DepositHistory`
 
-- [ ] 4. Write handler in `src/index.ts` (<30 lines)
-  - [ ] Listen to `TokenDeposited` event
-  - [ ] On event: create `DepositHistory` record with sender, amount, timestamp
-  - [ ] (Optional) Also listen to `Deposited` (ETH) event
+- [x] 4. Write handler in `src/index.ts` (<30 lines)
+  - [x] Listen to `TokenDeposited` event
+  - [x] On event: create `DepositHistory` record with sender, amount, timestamp
 
-- [ ] 5. Test locally
-  - [ ] Start Ponder: `pnpm dev`
-  - [ ] Make a deposit through the frontend
-  - [ ] Query via Ponder's built-in GraphQL playground
-  - [ ] Verify the deposit appears in query results
+- [x] 5. Test locally
+  - [x] Start Ponder: `pnpm dev`
+  - [x] Query via Ponder's built-in GraphQL playground
+  - [x] Verified 4 deposit records returned
 
-**Milestone**: Ponder running locally, you can query your deposit history via GraphQL instantly
+**Milestone**: ✅ Ponder running locally, queried deposit history via GraphQL — 4 records confirmed
 
 **Files to Create:**
 - `ponder-indexing/ponder.config.ts` - Ponder configuration
