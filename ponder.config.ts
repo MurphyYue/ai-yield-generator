@@ -1,20 +1,20 @@
 import { createConfig } from "ponder";
 
-import { ExampleContractAbi } from "./abis/ExampleContractAbi";
+import { VaultV3_ABI } from "./abis/VaultV3Abi";
 
 export default createConfig({
   chains: {
-    mainnet: {
-      id: 1,
-      rpc: process.env.PONDER_RPC_URL_1!,
+    anvil: {
+      id: 31337,
+      rpc: process.env.PONDER_RPC_URL_31337 ?? "http://localhost:8545",
     },
   },
   contracts: {
-    ExampleContract: {
-      chain: "mainnet",
-      abi: ExampleContractAbi,
-      address: "0x0000000000000000000000000000000000000000",
-      startBlock: 1234567,
+    VaultV3: {
+      chain: "anvil",
+      abi: VaultV3_ABI,
+      address: "0xf5059a5D33d5853360D16C683c16e67980206f36",
+      startBlock: 1,
     },
   },
 });
