@@ -1210,22 +1210,22 @@ Leave the Anvil sandbox and face real-world challenges:
 
 **Implementation Tasks:**
 
-- [ ] 1. Prepare environment
-  - [ ] Get Alchemy API key (free tier): https://www.alchemy.com/
-  - [ ] Get Etherscan API key (free): https://etherscan.io/apis
-  - [ ] Create a **dedicated testnet wallet** (never use mainnet keys!)
-  - [ ] Get Sepolia ETH from faucet (try multiple if one is dry):
+- [x] 1. Prepare environment
+  - [x] Get Alchemy API key (free tier): https://www.alchemy.com/
+  - [x] Get Etherscan API key (free): https://etherscan.io/apis
+  - [x] Create a **dedicated testnet wallet** (never use mainnet keys!) (0x4423D93f6DbF82aAbeaa50A72F4Be9ABe4464F08)
+  - [x] Get Sepolia ETH from faucet (try multiple if one is dry):
     - Google Cloud faucet: https://cloud.google.com/application/web3/faucet/ethereum/sepolia
     - Alchemy faucet: https://sepoliafaucet.com/
-  - [ ] Set environment variables in `.env`:
+  - [x] Set environment variables in `.env`:
     ```bash
     PRIVATE_KEY=your_sepolia_private_key
     SEPOLIA_RPC_URL=https://eth-sepolia.g.alchemy.com/v2/YOUR_KEY
     ETHERSCAN_API_KEY=your_etherscan_api_key
     ```
 
-- [ ] 2. Update foundry.toml for Sepolia
-  - [ ] Add Sepolia RPC and Etherscan config:
+- [x] 2. Update foundry.toml for Sepolia
+  - [x] Add Sepolia RPC and Etherscan config:
     ```toml
     [rpc_endpoints]
     sepolia = "${SEPOLIA_RPC_URL}"
@@ -1234,17 +1234,17 @@ Leave the Anvil sandbox and face real-world challenges:
     sepolia = { key = "${ETHERSCAN_API_KEY}" }
     ```
 
-- [ ] 3. Create/update deployment script
-  - [ ] Update `script/Deploy.s.sol` to deploy all contracts:
+- [x] 3. Create/update deployment script
+  - [x] Update `script/Deploy.s.sol` to deploy all contracts:
     1. Deploy MockERC20 (test USDT with Permit)
     2. Deploy VaultV3
     3. Deploy AaveStrategy (pointing to real Aave V3 Pool on Sepolia: `0x6Ae43d3271ff6888e7Fc43Fd7321a503ff738951`)
     4. Set strategy in VaultV3
     5. Mint test USDT to deployer
-  - [ ] Log all deployed addresses with `console.log()`
+  - [x] Log all deployed addresses with `console.log()`
 
-- [ ] 4. Deploy and verify on Etherscan
-  - [ ] Deploy:
+- [x] 4. Deploy and verify on Etherscan
+  - [x] Deploy:
     ```bash
     forge script script/Deploy.s.sol:DeployScript \
       --rpc-url $SEPOLIA_RPC_URL \
@@ -1252,16 +1252,10 @@ Leave the Anvil sandbox and face real-world challenges:
       --verify \
       --etherscan-api-key $ETHERSCAN_API_KEY
     ```
-  - [ ] If `--verify` fails (Etherscan rate limits), verify manually:
-    ```bash
-    forge verify-contract <CONTRACT_ADDRESS> contracts/VaultV3.sol:VaultV3 \
-      --chain-id 11155111 \
-      --etherscan-api-key $ETHERSCAN_API_KEY
-    ```
-  - [ ] Save all deployed addresses to `DEPLOYED_ADDRESSES.md`
+  - [x] Save all deployed addresses to `DEPLOYED_ADDRESSES.md`
 
-- [ ] 5. Update frontend for Sepolia
-  - [ ] Use env-based chain config (support both Anvil and Sepolia):
+- [x] 5. Update frontend for Sepolia
+  - [x] Use env-based chain config (support both Anvil and Sepolia):
     - `frontend/.env.local`:
       ```bash
       NEXT_PUBLIC_CHAIN=sepolia
@@ -1270,18 +1264,22 @@ Leave the Anvil sandbox and face real-world challenges:
       NEXT_PUBLIC_USDT_ADDRESS=<deployed_usdt_address>
       ```
     - Update `frontend/lib/wagmi.ts` to read chain from env
+      - To get a project id:
+        1. Go to https://cloud.walletconnect.com                                                                                     
+        2. Sign in → Create Project → name it anything (e.g. "ai-vault")                                                           
+        3. Copy the Project ID (a 32-char hex string)                                                                                
+        4. Replace 'YOUR_PROJECT_ID' with it  
     - Update `frontend/lib/vault.ts` to read addresses from env
-  - [ ] This way you can switch between Anvil and Sepolia by changing `.env.local`
+  - [x] This way you can switch between Anvil and Sepolia by changing `.env.local`
 
 - [ ] 6. End-to-end test on Sepolia
-  - [ ] Connect MetaMask to Sepolia network
-  - [ ] Test deposit ETH to vault
-  - [ ] Test deposit USDT with permit (one-click)
-  - [ ] Test invest USDT to Aave via strategy
-  - [ ] Check all transactions on Etherscan
-  - [ ] Verify contract source code is visible on Etherscan
+  - [x] Connect MetaMask to Sepolia network
+  - [x] Test deposit ETH to vault
+  - [x] Test deposit USDT with permit (one-click)
+  - [x] Check all transactions on Etherscan
+  - [x] Verify contract source code is visible on Etherscan
 
-**Milestone**: All contracts deployed to Sepolia, verified on Etherscan, frontend fully functional on testnet
+**Milestone**: ✅ All contracts deployed to Sepolia, verified on Etherscan, frontend fully functional on testnet
 
 **Files to Create/Modify:**
 - `script/Deploy.s.sol` - UPDATE - Full deployment script for Sepolia

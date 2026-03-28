@@ -56,8 +56,11 @@ export const VAULT_ABI = parseAbi([
   'event ThresholdUpdated(uint256 oldThreshold, uint256 newThreshold)',
 ])
 
-// VaultV3 Contract Address (Day 4 - Deployed with EIP-2612 Permit)
-export const VAULT_ADDRESS = '0xf5059a5D33d5853360D16C683c16e67980206f36' as const
+// VaultV3 Contract Address — env-based (supports Anv Sepolia)                                                        
+// Switch by setting NEXT_PUBLIC_CHA NEXT_PUBLIC_VAULT_ADDRESS in .env.local                                          
+export const VAULT_ADDRESS = (                                                                                            
+  process.env.NEXT_PUBLIC_VAULT_ADDRESS ?? '0xf5059a5D33d5853360D16C683c16e67980206f36'                                   
+) as `0x${string}`  
 
 // MockUSDT (ERC20 Token) ABI
 export const ERC20_ABI = parseAbi([
@@ -94,5 +97,9 @@ export const ERC20_PERMIT_ABI = parseAbi([
   'function version() external view returns (string)',
 ])
 
-// MockUSDT Token Address (Day 4 - Deployed with ERC20Permit)
-export const MOCK_USDT_ADDRESS = '0x851356ae760d987E095750cCeb3bC6014560891C' as const
+// MockUSDT Token Address — env-based (supports A Sepolia)                                                         
+export const MOCK_USDT_ADDRESS = (
+  process.env.NEXT_PUBLIC_USDT_ADDRESS ?? '0x851356ae760d987E095750cCeb3bC6014560891C'
+) as `0x${string}` 
+
+console.log(`Using Vault at ${VAULT_ADDRESS} and MockUSDT at ${MOCK_USDT_ADDRESS}`)
