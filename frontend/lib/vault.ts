@@ -101,5 +101,3 @@ export const ERC20_PERMIT_ABI = parseAbi([
 export const MOCK_USDT_ADDRESS = (
   process.env.NEXT_PUBLIC_USDT_ADDRESS ?? '0x851356ae760d987E095750cCeb3bC6014560891C'
 ) as `0x${string}` 
-
-console.log(`Using Vault at ${VAULT_ADDRESS} and MockUSDT at ${MOCK_USDT_ADDRESS}`)

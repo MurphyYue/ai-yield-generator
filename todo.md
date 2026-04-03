@@ -1340,24 +1340,24 @@ This connects your AI layer to the Strategy layer, completing the "Deposit → I
 At the end of Day 4, verify:
 
 1. **EIP-2612 Permit** (Mission N - Done):
-   - [ ] User deposits USDT without prior approval (one-click)
-   - [ ] Fallback to two-step flow works if permit fails
+   - [x] User deposits USDT without prior approval (one-click)
+   - [x] Fallback to two-step flow works if permit fails
 
 2. **Strategy Pattern** (Mission O):
-   - [ ] AaveStrategy deployed with MockAavePool on Anvil
-   - [ ] `invest()` moves USDT from vault → strategy → pool
-   - [ ] `divest()` moves USDT back
-   - [ ] `getTotalBalance()` includes strategy funds
-   - [ ] try/catch: strategy failure does NOT revert vault operations
+   - [x] AaveStrategy deployed with MockAavePool on Anvil
+   - [x] `invest()` moves USDT from vault → strategy → pool
+   - [x] `divest()` moves USDT back
+   - [x] `getTotalBalance()` includes strategy funds
+   - [x] try/catch: strategy failure does NOT revert vault operations
 
 3. **Ponder Indexing** (Mission P):
-   - [ ] Ponder container running, indexing `TokenDeposited` events
-   - [ ] GraphQL query returns deposit you just made
+   - [x] Ponder container running, indexing `TokenDeposited` events
+   - [x] GraphQL query returns deposit you just made
 
 4. **Sepolia Deployment** (Mission Q):
-   - [ ] Contracts verified on Etherscan (source code visible)
-   - [ ] Frontend works on Sepolia (deposit, withdraw, permit all functional)
-   - [ ] Strategy connects to real Aave V3 on Sepolia
+   - [x] Contracts verified on Etherscan (source code visible)
+   - [x] Frontend works on Sepolia (deposit, withdraw, permit all functional)
+   - [x] Strategy connects to real Aave V3 on Sepolia
 
 5. **AI Strategy Advisory** (Mission R):
    - [ ] Dify can parse "invest" and "check yield" intents
@@ -1450,3 +1450,539 @@ Complete "Deposit → Invest → Monitor" loop:
 - Instant data queries with Ponder (P)
 - Production-ready on Sepolia with verified contracts (Q)
 - AI-powered strategy advisory (R)
+
+# Day 5: AI-Powered Strategy Advisory System
+
+## Context
+
+**Problem**: The current AI layer (Dify) is a stateless intent parser — it maps "deposit 100 USDT" to JSON but has zero knowledge of the user's vault state, market rates, or strategy performance. It cannot advise.
+
+**Goal**: Transform Dify from a **parser** into a **strategy advisor** that reads real Aave on-chain data, reasons with Chain of Thought, and guides users through a multi-turn "suggest → confirm → execute" flow with safety pre-checks.
+
+**Architecture Overview**:
+```
+Frontend (AIPanel)
+  → sends vault state + user message
+  → POST /api/chat (upgraded, stateful conversation_id)
+     → POST /api/vault-context (new, reads on-chain data)
+        → Aave Pool.getReserveData() on Sepolia (real APY)
+        → viem getGasPrice() (real gas)
+        → calculates net APY
+     → Dify Workflow (upgraded from Chatflow)
+        → Node 1: HTTP Request → vault-context API
+        → Node 2: Knowledge Retrieval (Aave_Strategy_Context.md)
+        → Node 3: LLM reasoning (CoT)
+        → Node 4: structured output (strategy_logic + action_data)
+  ← returns { action: "suggest" | "intent_confirmed", strategy_logic, action_data }
+  → Frontend renders: suggestion bubble OR Transaction Card
+  → On confirm click: safety pre-check (re-fetch APY, deviation check)
+  → Execute invest/divest via useVault hook
+```
+
+---
+
+## Step 1: Data Pipeline — vault-context API (1 Day)
+
+### Goal
+Create `app/api/vault-context/route.ts` that returns real-time on-chain data for Dify to reason with.
+
+### 1.1 Create Aave ABI fragment for reading reserve data
+
+**File**: `frontend/lib/aave.ts` (NEW)
+
+The Aave V3 Pool contract at `0x6Ae43d3271ff6888e7Fc43Fd7321a503ff738951` has a `getReserveData(address asset)` function that returns a struct including `currentLiquidityRate` (supply APY in RAY format, 27 decimals).
+
+We also need `getReservesList()` to find which tokens Aave recognizes on Sepolia (to pick a real listed USDT/USDC address for APY reference).
+
+```typescript
+// ABI fragments needed:
+// Pool.getReserveData(address asset) → returns struct with currentLiquidityRate
+// Pool.getReservesList() → returns address[] of listed assets
+
+export const AAVE_POOL_ABI = parseAbi([
+  'function getReserveData(address asset) external view returns ((uint256 configuration, uint128 liquidityIndex, uint128 currentLiquidityRate, uint128 variableBorrowIndex, uint128 currentVariableBorrowRate, uint128 currentStableBorrowRate, uint40 lastUpdateTimestamp, uint16 id, address aTokenAddress, address stableDebtTokenAddress, address variableDebtTokenAddress, address interestRateStrategyAddress, uint128 accruedToTreasury, uint128 unbacked, uint128 isolationModeTotalDebt))',
+  'function getReservesList() external view returns (address[])',
+])
+
+export const AAVE_POOL_SEPOLIA = '0x6Ae43d3271ff6888e7Fc43Fd7321a503ff738951' as const
+
+// Virtual ETH price for Sepolia gas cost calculation (ETH has no real value on testnet)
+export const VIRTUAL_ETH_PRICE_USD = 2200
+```
+
+**Important**: The `getReserveData` return type is a tuple struct. The `currentLiquidityRate` is at index 2 (0-based). It's in RAY format (1e27). Conversion: `currentLiquidityRate / 1e27 * 100 = APY%`.
+
+**Finding the Aave-listed USDT on Sepolia**: We'll call `getReservesList()` once during development to discover the correct address, then hardcode it in `aave.ts` as `AAVE_LISTED_USDT_SEPOLIA`. This avoids a runtime lookup on every request.
+
+**Prerequisite task**: Before coding Step 1, run this one-time command to find listed tokens:
+```bash
+cast call 0x6Ae43d3271ff6888e7Fc43Fd7321a503ff738951 \
+  "getReservesList()(address[])" \
+  --rpc-url $SEPOLIA_RPC_URL
+```
+This returns all Aave-listed token addresses on Sepolia. We pick the one that represents USDT or USDC and hardcode it.
+
+### 1.2 Create vault-context API route
+
+**File**: `frontend/app/api/vault-context/route.ts` (NEW)
+
+**Request**: `GET` (no body needed — reads on-chain data directly)
+
+**Query params** (optional, for user-specific context from frontend):
+- `vaultIdle` — USDT sitting idle in vault
+- `strategyBalance` — USDT deployed in Aave
+- `userUsdtBalance` — user's total USDT in vault
+
+**Response JSON**:
+```typescript
+{
+  success: boolean
+  data: {
+    aave: {
+      supplyApy: number          // e.g., 3.897 (percentage)
+      token: string              // "USDT"
+      listedTokenAddress: string // Aave's real USDT on Sepolia
+    }
+    gas: {
+      gasPriceGwei: number       // e.g., 2.5
+      estimatedTxCostUsd: number // e.g., 0.12 (using virtual ETH price)
+    }
+    netApy: number               // ((principal * APY) - gasCost) / principal
+    vault: {
+      idleUsdt: number           // from query param
+      strategyUsdt: number       // from query param
+      userUsdt: number           // from query param
+    }
+    timestamp: number            // Unix timestamp
+  }
+  error?: string                 // If Aave call failed, include error and fallback data
+}
+```
+
+**Implementation logic**:
+1. Create a viem `publicClient` pointing to Sepolia RPC (from env `SEPOLIA_RPC_URL` or `NEXT_PUBLIC_ALCHEMY_RPC_URL`)
+2. Call `Pool.getReserveData(AAVE_LISTED_USDT_SEPOLIA)` → extract `currentLiquidityRate`
+3. Convert RAY to percentage: `Number(currentLiquidityRate) / 1e27 * 100`
+4. Call `getGasPrice()` → convert to Gwei
+5. Estimate gas cost: `gasPrice * 200_000 (estimated gas units) * VIRTUAL_ETH_PRICE_USD / 1e18`
+6. Calculate net APY using query param `vaultIdle` as principal:
+   - `netApy = ((vaultIdle * supplyApy / 100) - estimatedTxCostUsd) / vaultIdle * 100`
+   - If `vaultIdle <= 0`, set `netApy = supplyApy` (no principal to net against)
+7. Wrap Aave calls in try/catch — if Aave is down, return `error` field with message and `supplyApy: 0`
+
+**Anvil fallback**: If `NEXT_PUBLIC_CHAIN !== 'sepolia'`, return mock data:
+```json
+{ "supplyApy": 4.2, "gasPriceGwei": 1, "estimatedTxCostUsd": 0.01, "netApy": 4.19 }
+```
+
+### 1.3 Verification — Step 1
+
+- Start frontend dev server
+- `curl http://localhost:3000/api/vault-context?vaultIdle=1000&strategyBalance=200`
+- Verify response contains real `supplyApy` from Aave (should be a non-zero number)
+- Verify `gasPriceGwei` is a real value
+- Verify `netApy` is calculated correctly
+- Test error handling: use an invalid RPC URL, verify graceful fallback
+
+---
+
+## Step 2: Knowledge Base + Dify Workflow (1 Day)
+
+### Goal
+Upgrade Dify from stateless Chatflow to stateful Workflow with HTTP data fetching, knowledge retrieval, and CoT reasoning.
+
+### 2.1 Create knowledge base document
+
+**File**: `docs/Aave_Strategy_Context.md` (NEW — uploaded to Dify Knowledge Base)
+
+Content covers:
+- What Aave V3 is (lending protocol, supply to earn yield)
+- Risk thresholds by investor profile:
+  - Conservative: only invest if net APY > 3%, max 50% of idle funds
+  - Moderate: invest if net APY > 1%, max 80% of idle funds
+  - Aggressive: invest if net APY > 0%, up to 100% of idle funds
+- Red line: if `netApy < 0` (gas cost exceeds yield), MUST block with warning
+- What "idle USDT" means (funds in vault not earning yield)
+- What "strategy balance" means (funds deployed in Aave, earning yield)
+- Gas cost considerations on Ethereum
+
+### 2.2 Configure Dify Workflow (Manual — user does this in Dify dashboard)
+
+**Workflow nodes**:
+
+**Node 1: Start**
+- Input variable: `query` (user's message)
+- Input variable: `vault_context_url` (set to the vault-context API URL)
+
+**Node 2: HTTP Request**
+- Method: GET
+- URL: `{{vault_context_url}}` (the vault-context API endpoint)
+- This fetches real-time APY, gas, and vault state
+- Output: `http_response` (the JSON from vault-context)
+
+**Node 3: Knowledge Retrieval**
+- Knowledge base: `Aave_Strategy_Context.md`
+- Query: `{{query}}`
+- Retrieves relevant risk thresholds and strategy guidance
+
+**Node 4: LLM (Main reasoning node)**
+- Model: Claude or GPT-4
+- System prompt with CoT instructions:
+
+```
+You are a DeFi strategy advisor for a Web3 vault system.
+
+You have access to:
+1. Real-time market data (from HTTP node): {{http_response}}
+2. Strategy knowledge base (from retrieval): {{knowledge}}
+3. User's question: {{query}}
+
+RESPONSE FORMAT — Return ONLY valid JSON, no markdown:
+{
+  "action": "suggest" | "intent_confirmed" | "unknown",
+  "strategy_logic": "<human-readable explanation for the user>",
+  "action_data": {
+    "type": "invest" | "divest" | "check_yield" | "none",
+    "amount": <number or 0>,
+    "token": "USDT",
+    "protocol": "aave",
+    "net_apy": <number from http data>,
+    "risk_level": "low" | "medium" | "high"
+  },
+  "confidence": "high" | "medium" | "low"
+}
+
+REASONING RULES (think step by step):
+1. First, check the net APY from the HTTP data.
+   - If net_apy < 0: action="suggest", risk_level="high", strategy_logic MUST warn that gas exceeds yield.
+   - If net_apy > 0: proceed to step 2.
+
+2. Check the user's idle USDT (from vault data in HTTP response).
+   - If idle > 0 and user asks about investing or yield: suggest investing with specific amount.
+   - If idle = 0: tell user all funds are deployed or they need to deposit first.
+
+3. Determine action:
+   - If user is ASKING (e.g., "should I invest?", "check yield"): action="suggest"
+   - If user is CONFIRMING (e.g., "yes invest", "do it", "confirm"): action="intent_confirmed"
+   - If unclear: action="suggest" with clarifying question in strategy_logic
+
+4. For "intent_confirmed", include the exact amount in action_data.
+
+5. Always include strategy_logic with clear reasoning the user can understand.
+```
+
+**Node 5: Output**
+- Variables: Parse LLM output JSON → extract `action`, `strategy_logic`, `action_data`, `confidence`
+
+### 2.3 Update chat API route for Workflow + multi-turn
+
+**File**: `frontend/app/api/chat/route.ts` (MODIFY)
+
+**Key changes**:
+1. Switch Dify API endpoint from `chat-messages` to `workflows/run` (Dify Workflow API)
+2. Pass `vault_context_url` as input variable to Dify (the URL of our vault-context API)
+3. Accept and return `conversation_id` for multi-turn state:
+   - Request adds: `conversation_id?: string`
+   - Response adds: `conversation_id: string` (from Dify response)
+4. Update `IntentResponse` type to match new Workflow output:
+   ```typescript
+   interface IntentResponse {
+     action: 'suggest' | 'intent_confirmed' | 'unknown'
+     strategy_logic: string      // human-readable advice
+     action_data: {
+       type: 'invest' | 'divest' | 'check_yield' | 'deposit' | 'withdraw' | 'none'
+       amount: number
+       token: string
+       protocol: string
+       net_apy: number
+       risk_level: 'low' | 'medium' | 'high'
+     }
+     confidence: 'high' | 'medium' | 'low'
+   }
+   ```
+5. Keep the existing risk calculation as a fallback for deposit/withdraw intents
+6. For backward compatibility: if Dify returns old-format responses (from the existing Chatflow), handle gracefully
+
+**Dify Workflow API call format**:
+```typescript
+const response = await fetch('https://api.dify.ai/v1/workflows/run', {
+  method: 'POST',
+  headers: {
+    'Authorization': `Bearer ${DIFY_API_KEY}`,
+    'Content-Type': 'application/json',
+  },
+  body: JSON.stringify({
+    inputs: {
+      vault_context_url: `${baseUrl}/api/vault-context?vaultIdle=${vaultIdle}&strategyBalance=${strategyBalance}`,
+    },
+    query: message,
+    response_mode: 'blocking',
+    user: userId,
+    conversation_id: conversationId || '',
+  }),
+})
+```
+
+**Note on Dify Workflow API** (user must verify from Dify dashboard):
+- Endpoint is likely `POST /v1/workflows/run` (not `/v1/chat-messages`)
+- Workflow may use `inputs: { query: message, vault_context_url: url }` instead of `query` as top-level
+- Response likely has `{ data: { outputs: { action, strategy_logic, ... }, conversation_id } }`
+- Multi-turn `conversation_id` should work but needs verification
+- **Action item**: Before Step 2 implementation, test the Workflow API from Dify's built-in API explorer to confirm exact request/response format. We will adapt the code accordingly.
+
+### 2.4 Verification — Step 2
+
+- Configure Dify Workflow with all 5 nodes
+- Upload `Aave_Strategy_Context.md` to Dify Knowledge Base
+- Test in Dify playground: "should I invest my USDT?"
+  - Verify HTTP node fetches real data from vault-context API
+  - Verify LLM generates structured JSON with strategy_logic
+- Test via `curl` to `/api/chat`:
+  ```bash
+  curl -X POST http://localhost:3000/api/chat \
+    -H 'Content-Type: application/json' \
+    -d '{"message":"should I invest?","vaultBalances":{"ETH":1,"USDT":1000,"vaultIdle":800,"strategyBalance":200}}'
+  ```
+- Verify response has `action: "suggest"` and `strategy_logic` with real APY numbers
+
+---
+
+## Step 3: Frontend — Transaction Card + Multi-turn Chat (2 Days)
+
+### Goal
+Upgrade AIPanel to display strategy suggestions as chat bubbles and render a Transaction Card when the user confirms investment intent.
+
+### 3.1 Update AIPanel for multi-turn and suggestions
+
+**File**: `frontend/components/AIPanel.tsx` (MODIFY)
+
+**Key changes**:
+1. Store `conversationId` in state — pass to `/api/chat`, receive back updated ID
+2. Extend `Intent` interface to match new Workflow output:
+   ```typescript
+   interface Intent {
+     action: 'suggest' | 'intent_confirmed' | 'unknown'
+     strategy_logic: string
+     action_data: {
+       type: 'invest' | 'divest' | 'check_yield' | 'deposit' | 'withdraw' | 'none'
+       amount: number
+       token: string
+       protocol: string
+       net_apy: number
+       risk_level: 'low' | 'medium' | 'high'
+     }
+     confidence: 'high' | 'medium' | 'low'
+   }
+   ```
+3. Display `strategy_logic` as a styled advice bubble (not raw JSON)
+4. When `action === 'suggest'`:
+   - Show AI advice text in a chat-style bubble
+   - Show a "Yes, invest" / "No thanks" button pair for follow-up
+   - On "Yes, invest" → send confirmation message with same `conversationId` → multi-turn
+5. When `action === 'intent_confirmed'`:
+   - Render the **Transaction Card** component (see 3.2)
+6. Send `vaultIdle` and `strategyBalance` in request body (get from useVault hook)
+7. Update the example hint text: `Try: "should I invest?" · "check my yield" · "invest 500 USDT"`
+
+### 3.2 Create TransactionCard component
+
+**File**: `frontend/components/TransactionCard.tsx` (NEW)
+
+**Props**:
+```typescript
+interface TransactionCardProps {
+  actionData: {
+    type: 'invest' | 'divest'
+    amount: number
+    token: string
+    protocol: string
+    net_apy: number
+    risk_level: 'low' | 'medium' | 'high'
+  }
+  strategyLogic: string        // AI's reasoning to display
+  onExecute: () => void        // Called after safety pre-check passes
+  onCancel: () => void
+}
+```
+
+**UI layout** (within the AIPanel card area):
+```
+┌─────────────────────────────────────────┐
+│  Strategy Execution Card                │
+│                                         │
+│  AI Reasoning:                          │
+│  "Based on current Aave USDT yield of   │
+│   3.9% and low gas costs, investing     │
+│   500 USDT would earn ~19.5 USDT/year"  │
+│                                         │
+│  ┌──────────┐  ┌──────────┐             │
+│  │ Amount   │  │ Net APY  │             │
+│  │ 500 USDT │  │  3.87%   │             │
+│  └──────────┘  └──────────┘             │
+│  ┌──────────┐  ┌──────────┐             │
+│  │ Protocol │  │ Risk     │             │
+│  │ Aave V3  │  │ LOW      │             │
+│  └──────────┘  └──────────┘             │
+│                                         │
+│  Gas: ~0.12 USD                         │
+│                                         │
+│  [Step 1: Approve USDT]  (if needed)    │
+│  [Confirm Invest]        [Cancel]       │
+└─────────────────────────────────────────┘
+```
+
+**Logic**:
+1. On mount: check USDT allowance via `useVault().usdtAllowance`
+   - If allowance < amount → show "Step 1: Approve USDT" button
+   - If allowance >= amount → show "Confirm Invest" button directly
+2. "Approve USDT" click → call `useVault().approveUsdt(amount)`
+   - On success → button changes to "Confirm Invest"
+3. "Confirm Invest" click → triggers **safety pre-check** (see Step 4) → then calls `onExecute`
+4. `onExecute` in parent calls `useVault().invest(amount)` or `useVault().divest(amount)`
+
+### 3.3 Pass intent to AdminPanel for invest/divest
+
+**File**: `frontend/components/VaultDashboard.tsx` (MODIFY)
+
+**Changes**:
+1. Extend `Intent` interface to match new format
+2. Pass `intent` prop to `AdminPanel`:
+   ```tsx
+   <AdminPanel intent={intent} />
+   ```
+3. When AI returns `intent_confirmed` with `type: 'invest'` or `type: 'divest'`, the TransactionCard handles it directly in AIPanel (no need to route to AdminPanel form)
+
+**File**: `frontend/components/AdminPanel.tsx` (MODIFY)
+
+**Changes**:
+1. Accept optional `intent` prop
+2. When `intent?.action_data?.type === 'invest'`, auto-fill `investAmount`
+3. When `intent?.action_data?.type === 'divest'`, auto-fill `divestAmount`
+
+### 3.4 Verification — Step 3
+
+- Start dev server, connect wallet
+- Type "should I invest?" → AI shows suggestion bubble with real APY
+- Click "Yes, invest" → AI confirms intent → Transaction Card appears
+- Verify allowance check works (shows approve step if needed)
+- Click approve → then confirm invest → transaction executes
+- Type "check my yield" → shows current strategy balance info
+- Type "invest 500 USDT" → direct to intent_confirmed → Transaction Card
+
+---
+
+## Step 4: Safety Pre-check + Integration Test (1 Day)
+
+### Goal
+Add session lock, deviation interceptor, and run full end-to-end tests.
+
+### 4.1 Implement session lock and deviation interceptor
+
+**File**: `frontend/components/TransactionCard.tsx` (MODIFY — add safety logic)
+
+**Session Lock**:
+- When Transaction Card renders, store `suggestedNetApy` in component state (from `actionData.net_apy`)
+- This is the APY that was valid when AI made the suggestion
+
+**Pre-check on "Confirm Invest" click**:
+1. Call `GET /api/vault-context?vaultIdle=...` to get fresh `netApy`
+2. Compare `freshNetApy` vs `suggestedNetApy`
+3. Calculate deviation: `Math.abs(freshNetApy - suggestedNetApy) / suggestedNetApy * 100`
+
+**Deviation Interceptor**:
+- If deviation > 10%:
+  - Block the transaction
+  - Show warning: "Market conditions changed since AI's recommendation"
+  - Display: old APY vs new APY
+  - Send hidden re-query to Dify via `/api/chat`: `"[SYSTEM] Net APY changed from X% to Y%. Re-evaluate recommendation for user."`
+  - Display Dify's updated `strategy_logic` to user
+  - User can then re-confirm or cancel
+- If deviation <= 10%:
+  - Proceed with transaction normally
+
+### 4.2 Error handling for Aave data unavailability
+
+**File**: `frontend/components/TransactionCard.tsx` (in same modification)
+
+- If vault-context API returns `error` field (Aave is down):
+  - Show warning: "Unable to fetch current market rates"
+  - Disable "Confirm" button
+  - Suggest user try again later
+
+### 4.3 Integration test checklist
+
+**Full flow test**:
+1. [ ] Start frontend with `NEXT_PUBLIC_CHAIN=sepolia`
+2. [ ] Connect MetaMask to Sepolia
+3. [ ] Type "should I invest my USDT?" in AI panel
+4. [ ] Verify: suggestion bubble shows real Aave APY (non-zero)
+5. [ ] Click "Yes, invest"
+6. [ ] Verify: Transaction Card appears with amount, APY, gas estimate
+7. [ ] Verify: allowance check works (approve step if needed)
+8. [ ] Click "Confirm Invest"
+9. [ ] Verify: safety pre-check runs (fetches fresh APY)
+10. [ ] If deviation OK: MetaMask popup for invest transaction
+11. [ ] Note: invest() will fail on Sepolia (MockERC20 not Aave-listed) — this is expected and documented
+
+**Multi-turn test**:
+1. [ ] Type "check my yield"
+2. [ ] AI responds with strategy balance info
+3. [ ] Type "should I invest more?"
+4. [ ] Verify: conversation continues (same context, Dify remembers previous exchange)
+
+**Safety test**:
+1. [ ] Manually test deviation interceptor by modifying `suggestedNetApy` in devtools
+2. [ ] Verify warning appears when deviation > 10%
+3. [ ] Verify re-query to Dify generates updated advice
+
+**Anvil test** (where invest actually works):
+1. [ ] Switch to `NEXT_PUBLIC_CHAIN=anvil`
+2. [ ] Full flow: suggest → confirm → approve → invest → balance updates
+3. [ ] Verify strategy balance increases after invest
+
+### 4.4 Verification — Step 4
+
+- All integration test checklist items pass
+- Deviation interceptor blocks when APY changes significantly
+- Multi-turn conversation maintains context
+- Error states handled gracefully (Aave down, network error)
+
+---
+
+## Critical Files Summary
+
+### New Files
+| File | Purpose |
+|------|---------|
+| `frontend/lib/aave.ts` | Aave Pool ABI fragment, addresses, constants |
+| `frontend/app/api/vault-context/route.ts` | On-chain data aggregation API |
+| `frontend/components/TransactionCard.tsx` | Strategy execution card with safety pre-check |
+| `docs/Aave_Strategy_Context.md` | Knowledge base document for Dify RAG |
+
+### Modified Files
+| File | Changes |
+|------|---------|
+| `frontend/app/api/chat/route.ts` | Switch to Dify Workflow API, add conversation_id, new response types |
+| `frontend/components/AIPanel.tsx` | Multi-turn state, suggestion bubbles, TransactionCard rendering |
+| `frontend/components/VaultDashboard.tsx` | Extended Intent type, pass intent to AdminPanel |
+| `frontend/components/AdminPanel.tsx` | Accept intent prop, auto-fill invest/divest amounts |
+
+### Manual Tasks (User does in Dify dashboard)
+| Task | Description |
+|------|-------------|
+| Create Dify Workflow | 5-node workflow: Start → HTTP → Knowledge → LLM → Output |
+| Upload Knowledge Base | Upload `Aave_Strategy_Context.md` to Dify |
+| Configure LLM Node | Paste CoT system prompt with reasoning rules |
+| Get Workflow API key | May need a separate API key for workflow endpoint |
+
+---
+
+## Architecture Principles
+
+1. **Truth Provider Pattern**: AI never fabricates data — all numbers come from on-chain reads via vault-context API
+2. **Separation of Advisory and Execution**: Dify suggests, frontend executes — AI never auto-signs transactions
+3. **Session Lock**: APY recorded at suggestion time, re-validated at execution time
+4. **Graceful Degradation**: If Aave is down, show warning instead of crashing; if Dify fails, fall back to manual invest form
+5. **Multi-turn Statefulness**: conversation_id enables Dify to remember context across exchanges
+
+---

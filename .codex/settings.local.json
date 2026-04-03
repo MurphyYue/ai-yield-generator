@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(wc:*)",
+      "WebFetch(domain:docs.dify.ai)",
+      "WebFetch(domain:github.com)",
+      "Bash(source .env)",
+      "Bash(echo \"SEPOLIA_RPC_URL=$SEPOLIA_RPC_URL\")",
+      "Bash(find /Users/murphyyue/Projects/web3-projects/frontend -type f \\\\\\(-name *.tsx -o -name *.ts \\\\\\) -newer /Users/murphyyue/Projects/web3-projects/summary-report/MISSION_O_COMPLETE.md)"
+    ]
+  }
+}

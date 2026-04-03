@@ -13,6 +13,7 @@ interface ProvidersProps {
 }
 
 export function Providers({ children }: ProvidersProps) {
+  const [queryClient] = useState(() => new QueryClient())
   const [mounted, setMounted] = useState(false)
 
   useEffect(() => {
@@ -37,7 +38,7 @@ export function Providers({ children }: ProvidersProps) {
   return (
     <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
       <WagmiProvider config={config}>
-        <QueryClientProvider client={new QueryClient()}>
+        <QueryClientProvider client={queryClient}>
           <RainbowKitProvider>
             {children}
           </RainbowKitProvider>
