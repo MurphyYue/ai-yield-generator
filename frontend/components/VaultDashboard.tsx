@@ -10,26 +10,18 @@ import { AIPanel } from './AIPanel'
 import { AdminPanel } from './AdminPanel'
 import { SystemPausedBanner } from './SystemPausedBanner'
 import { ThemeToggle } from './ThemeToggle'
-
-interface Intent {
-  action: 'deposit' | 'withdraw' | 'unknown'
-  amount: number
-  token: 'ETH' | 'USDT' | 'unknown'
-  token_address: string
-  confidence: 'high' | 'medium' | 'low'
-  risk_level?: 'high' | 'medium' | 'low'
-  risk_reason?: string
-  riskConfirmed?: boolean
-}
+import { AIIntent, isLegacyIntent } from '@/lib/ai-intent'
 
 export function VaultDashboard() {
   const { isConnected } = useAccount()
-  const [intent, setIntent] = useState<Intent | null>(null)
+  const [intent, setIntent] = useState<AIIntent | null>(null)
 
-  const handleIntentParsed = (parsedIntent: Intent) => {
+  const handleIntentParsed = (parsedIntent: AIIntent) => {
     setIntent(parsedIntent)
     setTimeout(() => setIntent(null), 30000)
   }
+
+  const formIntent = isLegacyIntent(intent) ? intent : null
 
   if (!isConnected) {
     return (
@@ -111,14 +103,14 @@ export function VaultDashboard() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
             <AIPanel onIntentParsed={handleIntentParsed} />
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.25rem' }}>
-              <DepositPanel intent={intent} />
-              <WithdrawPanel intent={intent} />
+              <DepositPanel intent={formIntent} />
+              <WithdrawPanel intent={formIntent} />
             </div>
           </div>
 
           {/* ── Right: Admin panel sidebar ── */}
           <div style={{ position: 'sticky', top: 72 }}>
-            <AdminPanel />
+            <AdminPanel intent={intent} />
           </div>
 
         </div>

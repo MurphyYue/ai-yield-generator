@@ -1451,7 +1451,7 @@ Complete "Deposit → Invest → Monitor" loop:
 - Production-ready on Sepolia with verified contracts (Q)
 - AI-powered strategy advisory (R)
 
-# Day 5: AI-Powered Strategy Advisory System
+# Day 5: AI-Powered Strategy Advisory System(extended mission from 'Mission R' in Day 4 plan)
 
 ## Context
 
@@ -1468,11 +1468,12 @@ Frontend (AIPanel)
         → Aave Pool.getReserveData() on Sepolia (real APY)
         → viem getGasPrice() (real gas)
         → calculates net APY
-     → Dify Workflow (upgraded from Chatflow)
+     → Dify Chatflow (upgraded with new nodes, keeps multi-turn)
         → Node 1: HTTP Request → vault-context API
         → Node 2: Knowledge Retrieval (Aave_Strategy_Context.md)
         → Node 3: LLM reasoning (CoT)
         → Node 4: structured output (strategy_logic + action_data)
+        → conversation_id maintained across turns (built-in)
   ← returns { action: "suggest" | "intent_confirmed", strategy_logic, action_data }
   → Frontend renders: suggestion bubble OR Transaction Card
   → On confirm click: safety pre-check (re-fetch APY, deviation check)
@@ -1586,10 +1587,10 @@ This returns all Aave-listed token addresses on Sepolia. We pick the one that re
 
 ---
 
-## Step 2: Knowledge Base + Dify Workflow (1 Day)
+## Step 2: Knowledge Base + Dify Chatflow Upgrade (1 Day)
 
 ### Goal
-Upgrade Dify from stateless Chatflow to stateful Workflow with HTTP data fetching, knowledge retrieval, and CoT reasoning.
+Upgrade the existing Dify Chatflow with HTTP Request, Knowledge Retrieval, and CoT reasoning nodes. Stay with Chatflow (not Workflow) because Chatflow supports multi-turn `conversation_id` natively, which is required for our suggest → confirm flow.
 
 ### 2.1 Create knowledge base document
 
@@ -1606,9 +1607,14 @@ Content covers:
 - What "strategy balance" means (funds deployed in Aave, earning yield)
 - Gas cost considerations on Ethereum
 
-### 2.2 Configure Dify Workflow (Manual — user does this in Dify dashboard)
+### 2.2 Configure Dify Chatflow (Manual — user does this in Dify dashboard)
 
-**Workflow nodes**:
+**Why Chatflow, not Workflow?**
+- Chatflow supports `conversation_id` for multi-turn memory (Workflow does not)
+- Modern Dify Chatflow supports the same node types as Workflow: HTTP Request, Knowledge Retrieval, LLM, Code, etc.
+- We need multi-turn for the "suggest → confirm" flow — switching to Workflow would lose this
+
+**Chatflow nodes**:
 
 **Node 1: Start**
 - Input variable: `query` (user's message)
@@ -1674,17 +1680,18 @@ REASONING RULES (think step by step):
 **Node 5: Output**
 - Variables: Parse LLM output JSON → extract `action`, `strategy_logic`, `action_data`, `confidence`
 
-### 2.3 Update chat API route for Workflow + multi-turn
+### 2.3 Update chat API route for Chatflow + multi-turn
 
 **File**: `frontend/app/api/chat/route.ts` (MODIFY)
 
 **Key changes**:
-1. Switch Dify API endpoint from `chat-messages` to `workflows/run` (Dify Workflow API)
-2. Pass `vault_context_url` as input variable to Dify (the URL of our vault-context API)
+1. Keep the existing Dify API endpoint `POST /v1/chat-messages` (Chatflow API — unchanged)
+2. Pass `vault_context_url` as an input variable to Dify (Chatflow supports `inputs` dict)
 3. Accept and return `conversation_id` for multi-turn state:
    - Request adds: `conversation_id?: string`
    - Response adds: `conversation_id: string` (from Dify response)
-4. Update `IntentResponse` type to match new Workflow output:
+   - Currently sends `conversation_id: ''` — change to pass through the stored ID
+4. Update `IntentResponse` type to match new Chatflow output:
    ```typescript
    interface IntentResponse {
      action: 'suggest' | 'intent_confirmed' | 'unknown'
@@ -1703,9 +1710,9 @@ REASONING RULES (think step by step):
 5. Keep the existing risk calculation as a fallback for deposit/withdraw intents
 6. For backward compatibility: if Dify returns old-format responses (from the existing Chatflow), handle gracefully
 
-**Dify Workflow API call format**:
+**Dify Chatflow API call format** (same endpoint as before, just add inputs + conversation_id):
 ```typescript
-const response = await fetch('https://api.dify.ai/v1/workflows/run', {
+const response = await fetch(DIFY_API_URL, {  // stays as /v1/chat-messages
   method: 'POST',
   headers: {
     'Authorization': `Bearer ${DIFY_API_KEY}`,
@@ -1718,21 +1725,18 @@ const response = await fetch('https://api.dify.ai/v1/workflows/run', {
     query: message,
     response_mode: 'blocking',
     user: userId,
-    conversation_id: conversationId || '',
+    conversation_id: conversationId || '',  // pass stored ID for multi-turn
   }),
 })
 ```
 
-**Note on Dify Workflow API** (user must verify from Dify dashboard):
-- Endpoint is likely `POST /v1/workflows/run` (not `/v1/chat-messages`)
-- Workflow may use `inputs: { query: message, vault_context_url: url }` instead of `query` as top-level
-- Response likely has `{ data: { outputs: { action, strategy_logic, ... }, conversation_id } }`
-- Multi-turn `conversation_id` should work but needs verification
-- **Action item**: Before Step 2 implementation, test the Workflow API from Dify's built-in API explorer to confirm exact request/response format. We will adapt the code accordingly.
+**Key advantage of staying with Chatflow**: The API endpoint, request format, and response format are almost identical to what we already have. The only additions are:
+- `inputs` dict (for vault_context_url)
+- Storing and passing `conversation_id` from previous response
 
 ### 2.4 Verification — Step 2
 
-- Configure Dify Workflow with all 5 nodes
+- Configure Dify Chatflow with HTTP Request + Knowledge + LLM nodes
 - Upload `Aave_Strategy_Context.md` to Dify Knowledge Base
 - Test in Dify playground: "should I invest my USDT?"
   - Verify HTTP node fetches real data from vault-context API
@@ -1757,7 +1761,7 @@ Upgrade AIPanel to display strategy suggestions as chat bubbles and render a Tra
 **File**: `frontend/components/AIPanel.tsx` (MODIFY)
 
 **Key changes**:
-1. Store `conversationId` in state — pass to `/api/chat`, receive back updated ID
+1. Store `conversationId` in state — pass to `/api/chat`, receive back updated ID from Dify Chatflow response
 2. Extend `Intent` interface to match new Workflow output:
    ```typescript
    interface Intent {
@@ -1912,28 +1916,28 @@ Add session lock, deviation interceptor, and run full end-to-end tests.
 ### 4.3 Integration test checklist
 
 **Full flow test**:
-1. [ ] Start frontend with `NEXT_PUBLIC_CHAIN=sepolia`
-2. [ ] Connect MetaMask to Sepolia
-3. [ ] Type "should I invest my USDT?" in AI panel
-4. [ ] Verify: suggestion bubble shows real Aave APY (non-zero)
-5. [ ] Click "Yes, invest"
-6. [ ] Verify: Transaction Card appears with amount, APY, gas estimate
-7. [ ] Verify: allowance check works (approve step if needed)
-8. [ ] Click "Confirm Invest"
-9. [ ] Verify: safety pre-check runs (fetches fresh APY)
-10. [ ] If deviation OK: MetaMask popup for invest transaction
-11. [ ] Note: invest() will fail on Sepolia (MockERC20 not Aave-listed) — this is expected and documented
+1. [x] Start frontend with `NEXT_PUBLIC_CHAIN=sepolia`
+2. [x] Connect MetaMask to Sepolia
+3. [x] Type "should I invest my USDT?" in AI panel
+4. [x] Verify: suggestion bubble shows real Aave APY (non-zero)
+5. [x] Click "Yes, invest"
+6. [x] Verify: Transaction Card appears with amount, APY, gas estimate
+7. [x] Verify: allowance check works (approve step if needed)
+8. [x] Click "Confirm Invest"
+9. [x] Verify: safety pre-check runs (fetches fresh APY)
+10. [x] If deviation OK: MetaMask popup for invest transaction
+11. [x] Note: invest() will fail on Sepolia (MockERC20 not Aave-listed) — this is expected and documented
 
 **Multi-turn test**:
-1. [ ] Type "check my yield"
-2. [ ] AI responds with strategy balance info
-3. [ ] Type "should I invest more?"
-4. [ ] Verify: conversation continues (same context, Dify remembers previous exchange)
+1. [x] Type "check my yield"
+2. [x] AI responds with strategy balance info
+3. [x] Type "should I invest more?"
+4. [x] Verify: conversation continues (same context, Dify remembers previous exchange)
 
 **Safety test**:
-1. [ ] Manually test deviation interceptor by modifying `suggestedNetApy` in devtools
-2. [ ] Verify warning appears when deviation > 10%
-3. [ ] Verify re-query to Dify generates updated advice
+1. [x] Manually test deviation interceptor by modifying `suggestedNetApy` in devtools
+2. [x] Verify warning appears when deviation > 10%
+3. [x] Verify re-query to Dify generates updated advice
 
 **Anvil test** (where invest actually works):
 1. [ ] Switch to `NEXT_PUBLIC_CHAIN=anvil`
@@ -1962,7 +1966,7 @@ Add session lock, deviation interceptor, and run full end-to-end tests.
 ### Modified Files
 | File | Changes |
 |------|---------|
-| `frontend/app/api/chat/route.ts` | Switch to Dify Workflow API, add conversation_id, new response types |
+| `frontend/app/api/chat/route.ts` | Add conversation_id pass-through, inputs dict, new response types |
 | `frontend/components/AIPanel.tsx` | Multi-turn state, suggestion bubbles, TransactionCard rendering |
 | `frontend/components/VaultDashboard.tsx` | Extended Intent type, pass intent to AdminPanel |
 | `frontend/components/AdminPanel.tsx` | Accept intent prop, auto-fill invest/divest amounts |
@@ -1970,10 +1974,10 @@ Add session lock, deviation interceptor, and run full end-to-end tests.
 ### Manual Tasks (User does in Dify dashboard)
 | Task | Description |
 |------|-------------|
-| Create Dify Workflow | 5-node workflow: Start → HTTP → Knowledge → LLM → Output |
+| Upgrade Dify Chatflow | Add HTTP Request, Knowledge Retrieval, LLM nodes to existing Chatflow |
 | Upload Knowledge Base | Upload `Aave_Strategy_Context.md` to Dify |
 | Configure LLM Node | Paste CoT system prompt with reasoning rules |
-| Get Workflow API key | May need a separate API key for workflow endpoint |
+| No new API key needed | Chatflow uses the same API key as before |
 
 ---
 
@@ -1983,6 +1987,6 @@ Add session lock, deviation interceptor, and run full end-to-end tests.
 2. **Separation of Advisory and Execution**: Dify suggests, frontend executes — AI never auto-signs transactions
 3. **Session Lock**: APY recorded at suggestion time, re-validated at execution time
 4. **Graceful Degradation**: If Aave is down, show warning instead of crashing; if Dify fails, fall back to manual invest form
-5. **Multi-turn Statefulness**: conversation_id enables Dify to remember context across exchanges
+5. **Multi-turn Statefulness**: Dify Chatflow's built-in conversation_id enables memory across turns (Workflow lacks this — that's why we stayed with Chatflow)
 
 ---

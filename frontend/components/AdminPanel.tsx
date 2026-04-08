@@ -3,8 +3,13 @@
 import { useState, useEffect } from 'react'
 import { useAccount } from 'wagmi'
 import { useVault } from '@/hooks/useVault'
+import { AIIntent, isStrategyIntent } from '@/lib/ai-intent'
 
-export function AdminPanel() {
+interface AdminPanelProps {
+  intent?: AIIntent | null
+}
+
+export function AdminPanel({ intent }: AdminPanelProps) {
   const { address } = useAccount()
   const {
     isPaused,
@@ -27,6 +32,18 @@ export function AdminPanel() {
       return () => clearTimeout(t)
     }
   }, [isPauseSuccess, isUnpauseSuccess])
+
+  useEffect(() => {
+    if (!isStrategyIntent(intent)) return
+
+    if (intent.action_data.type === 'invest' && intent.action_data.amount > 0) {
+      setInvestAmount(intent.action_data.amount.toString())
+    }
+
+    if (intent.action_data.type === 'divest' && intent.action_data.amount > 0) {
+      setDivestAmount(intent.action_data.amount.toString())
+    }
+  }, [intent])
 
   const short = address ? `${address.slice(0, 6)}…${address.slice(-4)}` : '—'
 

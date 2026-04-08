@@ -1,36 +1,41 @@
 'use client'
 
 import { useState } from 'react'
+import { useAccount } from 'wagmi'
 import { useVault } from '@/hooks/useVault'
-
-interface Intent {
-  action: 'deposit' | 'withdraw' | 'unknown'
-  amount: number
-  token: 'ETH' | 'USDT' | 'unknown'
-  token_address: string
-  confidence: 'high' | 'medium' | 'low'
-  risk_level?: 'high' | 'medium' | 'low'
-  risk_reason?: string
-}
+import { AIIntent, isLegacyIntent, isStrategyIntent, StrategyIntent } from '@/lib/ai-intent'
+import { TransactionCard } from './TransactionCard'
 
 interface AIPanelProps {
-  onIntentParsed?: (intent: Intent) => void
+  onIntentParsed?: (intent: AIIntent) => void
 }
 
 export function AIPanel({ onIntentParsed }: AIPanelProps) {
+  const { address, isConnected } = useAccount()
   const [message, setMessage] = useState('')
+  const [conversationId, setConversationId] = useState('')
   const [isLoading, setIsLoading] = useState(false)
-  const [intent, setIntent] = useState<Intent | null>(null)
+  const [intent, setIntent] = useState<AIIntent | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [riskConfirmed, setRiskConfirmed] = useState(false)
 
-  const { vaultBalanceFormatted, vaultUsdtBalanceFormatted } = useVault()
+  const {
+    vaultBalanceFormatted,
+    vaultUsdtBalanceFormatted,
+    vaultTokenHoldingsFormatted,
+    strategyBalanceFormatted,
+    invest,
+    divest,
+  } = useVault()
 
-  const handleProcess = async () => {
-    if (!message.trim()) return
+  const runMessage = async (rawMessage: string) => {
+    if (!address) {
+      setError('Connect wallet to use AI advisor.')
+      return
+    }
+
     setIsLoading(true)
     setError(null)
-    setIntent(null)
     setRiskConfirmed(false)
 
     try {
@@ -38,26 +43,43 @@ export function AIPanel({ onIntentParsed }: AIPanelProps) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          message: message.trim(),
+          message: rawMessage,
+          user_id: address,
+          conversation_id: conversationId,
           vaultBalances: {
             ETH: parseFloat(vaultBalanceFormatted) || 0,
             USDT: parseFloat(vaultUsdtBalanceFormatted) || 0,
-          }
+            vaultIdle: parseFloat(vaultTokenHoldingsFormatted) || 0,
+            strategyBalance: parseFloat(strategyBalanceFormatted) || 0,
+            userUsdtBalance: parseFloat(vaultUsdtBalanceFormatted) || 0,
+          },
         }),
       })
 
       const data = await response.json()
 
-      if (data.success && data.intent) {
-        const parsedIntent = data.intent as Intent
-        setIntent(parsedIntent)
-        if (parsedIntent.risk_level === 'high') return
-        if (onIntentParsed) onIntentParsed(parsedIntent)
-        if (parsedIntent.action === 'unknown' || parsedIntent.confidence === 'low') {
-          setError('Could not understand. Try "deposit 1 ETH" or "withdraw 50 USDT".')
-        }
-      } else {
+      if (!data.success || !data.intent) {
         setError(data.error || 'Failed to process intent')
+        return
+      }
+
+      const parsedIntent = data.intent as AIIntent
+      setIntent(parsedIntent)
+      if (data.conversation_id) setConversationId(data.conversation_id)
+
+      if (isStrategyIntent(parsedIntent)) {
+        if (parsedIntent.action === 'unknown' || parsedIntent.confidence === 'low') {
+          setError('The advisor needs a clearer question. Try "should I invest?" or "invest 500 USDT".')
+        }
+        onIntentParsed?.(parsedIntent)
+        return
+      }
+
+      if (parsedIntent.risk_level === 'high') return
+      onIntentParsed?.(parsedIntent)
+
+      if (parsedIntent.action === 'unknown' || parsedIntent.confidence === 'low') {
+        setError('Could not understand. Try "deposit 1 ETH" or "withdraw 50 USDT".')
       }
     } catch {
       setError('Network error. Please try again.')
@@ -66,27 +88,74 @@ export function AIPanel({ onIntentParsed }: AIPanelProps) {
     }
   }
 
+  const handleProcess = async () => {
+    if (!message.trim()) return
+    await runMessage(message.trim())
+  }
+
   const handleRiskConfirm = () => {
     setRiskConfirmed(true)
-    if (intent && onIntentParsed) onIntentParsed({ ...intent })
+    if (intent && isLegacyIntent(intent)) {
+      onIntentParsed?.({ ...intent })
+    }
+  }
+
+  const handleAdvisorConfirm = async () => {
+    if (!isStrategyIntent(intent)) return
+
+    const prompt =
+      intent.action_data.type === 'divest'
+        ? `Confirm divest ${intent.action_data.amount} ${intent.action_data.token} from ${intent.action_data.protocol}.`
+        : `Confirm invest ${intent.action_data.amount} ${intent.action_data.token} into ${intent.action_data.protocol}.`
+
+    await runMessage(prompt)
+  }
+
+  const handleReevaluate = async (freshNetApy: number) => {
+    if (!isStrategyIntent(intent)) return null
+
+    const response = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message: `[SYSTEM] Net APY changed from ${intent.action_data.net_apy.toFixed(2)}% to ${freshNetApy.toFixed(2)}%. Re-evaluate recommendation for user.`,
+        user_id: address,
+        conversation_id: conversationId,
+        vaultBalances: {
+          ETH: parseFloat(vaultBalanceFormatted) || 0,
+          USDT: parseFloat(vaultUsdtBalanceFormatted) || 0,
+          vaultIdle: parseFloat(vaultTokenHoldingsFormatted) || 0,
+          strategyBalance: parseFloat(strategyBalanceFormatted) || 0,
+          userUsdtBalance: parseFloat(vaultUsdtBalanceFormatted) || 0,
+        },
+      }),
+    })
+
+    const data = await response.json()
+    if (!data.success || !data.intent) return null
+
+    const reevaluated = data.intent as AIIntent
+    if (data.conversation_id) setConversationId(data.conversation_id)
+    setIntent(reevaluated)
+
+    return isStrategyIntent(reevaluated) ? reevaluated.strategy_logic : null
   }
 
   const riskBadgeStyle = (risk?: string) => {
-    if (risk === 'high')   return { color: 'var(--red)',   background: 'var(--red-dim)',   border: '1px solid rgba(248,113,113,0.2)' }
+    if (risk === 'high') return { color: 'var(--red)', background: 'var(--red-dim)', border: '1px solid rgba(248,113,113,0.2)' }
     if (risk === 'medium') return { color: 'var(--amber)', background: 'var(--amber-dim)', border: '1px solid rgba(251,191,36,0.2)' }
-    return                        { color: 'var(--green)', background: 'var(--green-dim)', border: '1px solid rgba(52,211,153,0.2)' }
+    return { color: 'var(--green)', background: 'var(--green-dim)', border: '1px solid rgba(52,211,153,0.2)' }
   }
 
-  const riskIcon = (r?: string) => r === 'high' ? '⚠' : r === 'medium' ? '⚡' : '✓'
+  const riskIcon = (risk?: string) => risk === 'high' ? '⚠' : risk === 'medium' ? '⚡' : '✓'
 
   return (
     <div className="card">
-      {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
         <div>
-          <div style={{ fontWeight: 700, fontSize: '0.95rem', letterSpacing: '-0.01em' }}>AI Command</div>
+          <div style={{ fontWeight: 700, fontSize: '0.95rem', letterSpacing: '-0.01em' }}>AI Advisor</div>
           <div style={{ fontSize: '0.7rem', color: 'var(--text-2)', marginTop: 2 }}>
-            Try: "deposit 1 ETH" · "withdraw all USDT" · "取出 50% ETH"
+            Try: "should I invest?" · "check my yield" · "invest 500 USDT"
           </div>
         </div>
         <div style={{
@@ -99,7 +168,6 @@ export function AIPanel({ onIntentParsed }: AIPanelProps) {
         </div>
       </div>
 
-      {/* Input row */}
       <div style={{ display: 'flex', gap: 8 }}>
         <input
           className="vault-input"
@@ -113,20 +181,24 @@ export function AIPanel({ onIntentParsed }: AIPanelProps) {
         <button
           className="btn btn-cyan"
           onClick={handleProcess}
-          disabled={isLoading || !message.trim()}
+          disabled={isLoading || !message.trim() || !isConnected}
           style={{ minWidth: 90 }}
         >
           {isLoading ? '…' : 'Process'}
         </button>
       </div>
 
-      {/* Error */}
+      {!isConnected && (
+        <div className="alert-amber" style={{ marginTop: 10 }}>
+          Connect wallet to use AI advisor.
+        </div>
+      )}
+
       {error && (
         <div className="alert-red" style={{ marginTop: 10 }}>{error}</div>
       )}
 
-      {/* Parsed intent */}
-      {intent && intent.action !== 'unknown' && (
+      {intent && isLegacyIntent(intent) && intent.action !== 'unknown' && (
         <div style={{
           marginTop: 10,
           background: 'var(--surface-2)', border: '1px solid var(--border)',
@@ -135,31 +207,9 @@ export function AIPanel({ onIntentParsed }: AIPanelProps) {
           <div className="section-label">Parsed Intent</div>
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 8, marginBottom: 10 }}>
-            {/* Action */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-              <span style={{ fontSize: '0.6rem', color: 'var(--text-3)', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase' }}>Action</span>
-              <span style={{
-                fontFamily: "'JetBrains Mono', monospace", fontSize: '0.75rem', fontWeight: 600,
-                color: intent.action === 'deposit' ? 'var(--cyan)' : 'var(--purple)',
-              }}>
-                {intent.action.toUpperCase()}
-              </span>
-            </div>
-            {/* Amount */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-              <span style={{ fontSize: '0.6rem', color: 'var(--text-3)', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase' }}>Amount</span>
-              <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-1)' }}>
-                {intent.amount}
-              </span>
-            </div>
-            {/* Token */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-              <span style={{ fontSize: '0.6rem', color: 'var(--text-3)', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase' }}>Token</span>
-              <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-1)' }}>
-                {intent.token}
-              </span>
-            </div>
-            {/* Risk */}
+            <Field label="Action" value={intent.action.toUpperCase()} accent={intent.action === 'deposit' ? 'var(--cyan)' : 'var(--purple)'} />
+            <Field label="Amount" value={String(intent.amount)} />
+            <Field label="Token" value={intent.token} />
             <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
               <span style={{ fontSize: '0.6rem', color: 'var(--text-3)', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase' }}>Risk</span>
               <span style={{
@@ -179,7 +229,6 @@ export function AIPanel({ onIntentParsed }: AIPanelProps) {
             </div>
           )}
 
-          {/* High risk confirmation */}
           {intent.risk_level === 'high' && !riskConfirmed && (
             <div className="alert-red" style={{ marginTop: 6 }}>
               <div style={{ fontWeight: 600, marginBottom: 6 }}>⚠ High Risk — Confirm to proceed</div>
@@ -197,16 +246,93 @@ export function AIPanel({ onIntentParsed }: AIPanelProps) {
         </div>
       )}
 
+      {intent && isStrategyIntent(intent) && intent.action !== 'unknown' && (
+        <div style={{
+          marginTop: 10,
+          background: 'var(--surface-2)',
+          border: '1px solid var(--border)',
+          borderRadius: 10,
+          padding: '0.875rem',
+        }}>
+          <div className="section-label">Strategy Advice</div>
+          <div style={{
+            background: 'var(--surface-3)',
+            border: '1px solid var(--border)',
+            borderRadius: 8,
+            padding: '0.8rem',
+            fontSize: '0.8rem',
+            lineHeight: 1.5,
+            color: 'var(--text-2)',
+            marginTop: 8,
+          }}>
+            {intent.strategy_logic}
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 8, marginTop: 10 }}>
+            <Field label="Action" value={intent.action.toUpperCase()} accent="var(--cyan)" />
+            <Field label="Type" value={intent.action_data.type.toUpperCase()} />
+            <Field label="Amount" value={String(intent.action_data.amount)} />
+            <Field label="Net APY" value={`${intent.action_data.net_apy.toFixed(2)}%`} />
+          </div>
+
+          {intent.action === 'suggest' && (intent.action_data.type === 'invest' || intent.action_data.type === 'divest') && (
+            <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+              <button className="btn btn-cyan" style={{ flex: 1 }} onClick={handleAdvisorConfirm} disabled={isLoading}>
+                {intent.action_data.type === 'divest' ? 'Yes, divest' : 'Yes, invest'}
+              </button>
+              <button className="btn btn-outline" style={{ flex: 1 }} onClick={() => setIntent(null)}>
+                No thanks
+              </button>
+            </div>
+          )}
+
+          {intent.action === 'intent_confirmed' && (intent.action_data.type === 'invest' || intent.action_data.type === 'divest') && (
+            <TransactionCard
+              actionData={intent.action_data}
+              strategyLogic={intent.strategy_logic}
+              vaultIdle={parseFloat(vaultTokenHoldingsFormatted) || 0}
+              strategyBalance={parseFloat(strategyBalanceFormatted) || 0}
+              userUsdtBalance={parseFloat(vaultUsdtBalanceFormatted) || 0}
+              onExecute={() => {
+                if (intent.action_data.type === 'divest') {
+                  divest(intent.action_data.amount.toString())
+                } else {
+                  invest(intent.action_data.amount.toString())
+                }
+              }}
+              onCancel={() => setIntent(null)}
+              onReevaluate={handleReevaluate}
+            />
+          )}
+        </div>
+      )}
+
       {(intent || error) && (
         <button
           style={{ marginTop: 8, fontSize: '0.7rem', color: 'var(--text-3)', background: 'none', border: 'none', cursor: 'pointer' }}
           onMouseOver={e => (e.currentTarget.style.color = 'var(--text-2)')}
           onMouseOut={e => (e.currentTarget.style.color = 'var(--text-3)')}
-          onClick={() => { setMessage(''); setIntent(null); setError(null); setRiskConfirmed(false) }}
+          onClick={() => { setMessage(''); setIntent(null); setError(null); setRiskConfirmed(false); setConversationId('') }}
         >
           Clear
         </button>
       )}
+    </div>
+  )
+}
+
+function Field({ label, value, accent }: { label: string; value: string; accent?: string }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+      <span style={{ fontSize: '0.6rem', color: 'var(--text-3)', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase' }}>{label}</span>
+      <span style={{
+        fontFamily: "'JetBrains Mono', monospace",
+        fontSize: '0.8rem',
+        fontWeight: 600,
+        color: accent || 'var(--text-1)',
+      }}>
+        {value}
+      </span>
     </div>
   )
 }
