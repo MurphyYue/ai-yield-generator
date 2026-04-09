@@ -1990,3 +1990,755 @@ Add session lock, deviation interceptor, and run full end-to-end tests.
 5. **Multi-turn Statefulness**: Dify Chatflow's built-in conversation_id enables memory across turns (Workflow lacks this — that's why we stayed with Chatflow)
 
 ---
+
+# Days 6-14: Cross-Chain Yield Navigator — Base + Arbitrum Mainnet
+
+## Context
+
+**Problem**: The project runs on Sepolia testnet with MockERC20 (not Aave-listed). The invest() flow doesn't work on Sepolia, APY data is unreliable on thinly-traded testnets, and the system cannot demonstrate real yield generation.
+
+**Goal**: Deploy VaultV3 + AaveStrategy on Base mainnet and Arbitrum mainnet using real USDC and real Aave V3. Add cross-chain APY comparison, AI advisory with honest cost modeling, and LI.FI bridge widget for cross-chain migration. Budget: <50 USDC total risk.
+
+**Career Goal**: Land a **Senior Full-Stack Web3 Engineer** role (global remote) within 1-3 months. This project is the portfolio centerpiece. Each day includes interview preparation tasks alongside building work.
+
+**Engineering Process** (follows industry-standard 5-level DeFi workflow):
+```
+Level 1: Local Unit Tests (Days 1-5)           ✅ Done (63 tests, mocks)
+Level 2: Mainnet Fork Testing (Days 6-8)       ← THIS PLAN STARTS HERE
+Level 3: Public Testnet UI Flow (Days 1-5)     ✅ Done (Sepolia)
+Level 4: Canary Mainnet Deployment (Days 9-10) ← Small real USDC
+Level 5: Production Features (Days 11-14)      ← Cross-chain, LI.FI, AI
+```
+
+**Why this order matters**:
+Our reviewer correctly identified that we tried to do Level 2 work (protocol integration) in a Level 3 environment (Sepolia testnet). Testnets have broken liquidity, stale oracles, and incompatible tokens. Mainnet forking solves all of these by cloning real protocol state locally at zero cost.
+
+**Architecture**:
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    FRONTEND (Next.js)                        │
+│                                                              │
+│  AIPanel → vault-context API → reads BOTH chains             │
+│    │              │                  │                        │
+│    │       Base Aave Pool     Arbitrum Aave Pool              │
+│    │              │                  │                        │
+│    ▼              ▼                  ▼                        │
+│  "Arb is 2.1% higher. Net advantage $3 after fees."         │
+│    │                                                         │
+│    ▼                                                         │
+│  Risk Modal → LI.FI Widget → Bridge USDC Base↔Arbitrum      │
+│                                    │                         │
+│                                    ▼                         │
+│                     Deposit into destination Vault            │
+└─────────────────────────────────────────────────────────────┘
+
+CONTRACT LAYER:
+┌──────────────────────┐         ┌──────────────────────┐
+│   Base (8453)        │  LI.FI  │  Arbitrum (42161)    │
+│                      │◄═══════►│                      │
+│  VaultV3             │  bridge │  VaultV3             │
+│  AaveStrategy        │         │  AaveStrategy        │
+│  → Base Aave Pool    │         │  → Arb Aave Pool     │
+│  Real USDC           │         │  Real USDC           │
+└──────────────────────┘         └──────────────────────┘
+```
+
+---
+
+## Critical Addresses Reference
+
+| | Base (8453) | Arbitrum (42161) |
+|---|---|---|
+| **Aave V3 Pool** | `0xA238Dd80C259a72e81d7e4664a9801593F98d1c5` | `0x794a61358D6845594F94dc1DB02A252b5b4814aD` |
+| **Native USDC** | `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913` | `0xaf88d065e77c8cC2239327C5EDb3A432268e5831` |
+| **USDC Decimals** | 6 | 6 |
+
+**Important**: Aave Pool addresses must be verified via `cast call` before any deployment.
+
+Sources:
+- [Aave V3 Deployed Contracts](https://docs.aave.com/developers/deployed-contracts/v3-mainnet)
+- [Circle USDC Multi-chain](https://www.circle.com/multi-chain-usdc)
+- [BGD Labs Aave Address Book](https://github.com/bgd-labs/aave-address-book)
+
+---
+
+## Day 6: Environment Setup + Deploy Script Update
+
+### 6.1 Get RPC endpoints + API keys (User does manually)
+
+- **Alchemy**: Create Base mainnet + Arbitrum mainnet apps (free tier)
+  - Base RPC URL: `https://base-mainnet.g.alchemy.com/v2/YOUR_KEY`
+  - Arbitrum RPC URL: `https://arb-mainnet.g.alchemy.com/v2/YOUR_KEY`
+- **BaseScan API key**: https://basescan.org/apis (free)
+- **Arbiscan API key**: https://arbiscan.io/apis (free)
+
+### 6.2 Update .env (root)
+
+**File**: `.env`
+
+Add (keep existing Sepolia/Anvil vars):
+```
+BASE_RPC_URL=https://base-mainnet.g.alchemy.com/v2/YOUR_KEY
+ARBITRUM_RPC_URL=https://arb-mainnet.g.alchemy.com/v2/YOUR_KEY
+BASESCAN_API_KEY=your_basescan_key
+ARBISCAN_API_KEY=your_arbiscan_key
+```
+
+### 6.3 Update foundry.toml
+
+**File**: `foundry.toml`
+
+Add Base and Arbitrum RPC endpoints and block explorer configs:
+```toml
+[rpc_endpoints]
+base = "${BASE_RPC_URL}"
+arbitrum = "${ARBITRUM_RPC_URL}"
+
+[etherscan]
+base = { key = "${BASESCAN_API_KEY}", url = "https://api.basescan.org/api" }
+arbitrum = { key = "${ARBISCAN_API_KEY}", url = "https://api.arbiscan.io/api" }
+```
+
+### 6.4 Verify Aave Pool addresses
+
+Before writing any deploy code, confirm the Aave pools are real and responsive:
+
+```bash
+source .env
+
+# Verify Base Aave Pool — should return a list of token addresses
+cast call 0xA238Dd80C259a72e81d7e4664a9801593F98d1c5 \
+  "getReservesList()(address[])" --rpc-url $BASE_RPC_URL
+
+# Verify Arbitrum Aave Pool
+cast call 0x794a61358D6845594F94dc1DB02A252b5b4814aD \
+  "getReservesList()(address[])" --rpc-url $ARBITRUM_RPC_URL
+
+# Confirm USDC is a listed reserve on Base Aave
+# (check if 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913 appears in the list)
+```
+
+If any address is wrong, stop and find the correct one before proceeding.
+
+### 6.5 Update Deploy.s.sol for mainnet
+
+**File**: `script/Deploy.s.sol`
+
+Key changes:
+- Add Base and Arbitrum Aave Pool + USDC address constants
+- For mainnet chains: DO NOT deploy MockERC20 — use real USDC
+- For mainnet chains: DO NOT mint tokens — user already has real USDC
+- Keep Anvil/Sepolia paths for backward compatibility
+
+```
+Chain detection logic:
+  if (chainId == 8453)       → Base mainnet: real Aave Pool, real USDC
+  if (chainId == 42161)      → Arbitrum mainnet: real Aave Pool, real USDC
+  if (chainId == 11155111)   → Sepolia: Sepolia Aave Pool, MockERC20
+  else                       → Anvil: MockAavePool, MockERC20
+
+Mainnet deployment deploys ONLY:
+  1. VaultV3
+  2. AaveStrategy(vault, USDC_ADDRESS, AAVE_POOL_ADDRESS)
+  3. vault.setStrategy(strategy)
+  (No MockERC20, no mint, no MockAavePool)
+```
+
+### 6.6 Verification — Day 6
+- [ ] Alchemy RPC URLs work (`cast block-number --rpc-url $BASE_RPC_URL`)
+- [ ] BaseScan + Arbiscan API keys obtained
+- [ ] Aave Pool addresses verified (getReservesList returns USDC)
+- [ ] Deploy.s.sol updated with Base/Arbitrum chain detection
+- [ ] `forge build` passes with updated script
+
+
+---
+
+## Day 7: Mainnet Fork Testing — Base (Level 2)
+
+This is the **most critical day**. We validate that our contracts work with real Aave, real USDC, and real liquidity — at zero cost.
+
+### 7.1 Start Base mainnet fork
+
+```bash
+source .env
+anvil --fork-url $BASE_RPC_URL
+# Anvil now runs at http://127.0.0.1:8545 with Base mainnet state cloned
+```
+
+### 7.2 Create fork test file
+
+**File**: `test/ForkBase.t.sol` (NEW)
+
+This is a Foundry test that runs against the forked Base mainnet state. It uses real addresses, real Aave, real USDC.
+
+**Test cases to write** (all using `--fork-url`):
+
+```solidity
+// Setup:
+// - Use deal() to give test address 100,000 USDC
+// - Deploy VaultV3 + AaveStrategy pointing to real Base Aave Pool
+// - Set strategy in vault
+
+function test_fork_deposit_real_usdc()
+  // Approve vault, depositToken(USDC, 1000e6)
+  // Assert: tokenBalances[USDC][user] == 1000e6
+
+function test_fork_invest_into_real_aave()
+  // deposit 1000 USDC, then invest(USDC, 1000e6)
+  // Assert: vault's USDC balance decreased
+  // Assert: strategy.totalAssets() == 1000e6
+  // Assert: Aave aToken balance > 0 (real aToken minted)
+
+function test_fork_divest_from_real_aave()
+  // invest 1000, then divest(500e6)
+  // Assert: vault's USDC balance increased by ~500
+  // Assert: strategy.totalAssets() == ~500e6
+
+function test_fork_full_cycle_deposit_invest_divest_withdraw()
+  // deposit → invest → divest → withdrawToken
+  // Assert: user gets USDC back (minus any Aave rounding)
+
+function test_fork_read_real_apy()
+  // Call Pool.getReserveData(USDC) on fork
+  // Assert: currentLiquidityRate > 0 (real APY exists)
+  // Log the actual APY for manual verification
+
+function test_fork_large_deposit_respects_supply_cap()
+  // Try to invest 10,000,000 USDC (exceeds supply cap)
+  // Assert: strategy.deposit() returns false (try/catch catches it)
+  // Assert: vault funds are safe (returned to vault)
+
+function test_fork_strategy_failure_isolation()
+  // Deploy with wrong Aave Pool address (to force failure)
+  // Try invest → should fail gracefully
+  // Assert: vault USDC balance unchanged
+
+function test_fork_permit_with_real_usdc()
+  // Note: Real USDC on Base may or may not support EIP-2612 permit
+  // If it does: test depositWithPermit
+  // If not: test that fallback to approve+deposit works
+```
+
+### 7.3 Run fork tests
+
+```bash
+source .env
+forge test --match-path test/ForkBase.t.sol --fork-url $BASE_RPC_URL -vvv
+```
+
+Key flags:
+- `--fork-url`: tells Foundry to run against cloned mainnet state
+- `-vvv`: verbose output to see actual Aave interactions
+- Tests are free — no real gas spent
+
+### 7.4 Run Slither static analysis
+
+```bash
+pip install slither-analyzer  # if not installed
+slither contracts/VaultV3.sol --solc-remaps "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/"
+slither contracts/AaveStrategy.sol --solc-remaps "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/"
+```
+
+Document findings in `summary-report/SECURITY_ANALYSIS.md`:
+- Critical: must fix before mainnet
+- High/Medium: fix if possible, document if accepted
+- Low/Info: document and accept
+
+### 7.5 Verification — Day 7
+- [ ] All 8 fork tests pass against Base mainnet state
+- [ ] `invest()` successfully supplies USDC to real Base Aave (on fork)
+- [ ] `divest()` successfully withdraws from real Base Aave (on fork)
+- [ ] `getReserveData()` returns real APY (non-zero, reasonable range)
+- [ ] Strategy failure isolation confirmed (bad pool address → vault funds safe)
+- [ ] Slither run completed, critical findings addressed
+- [ ] `summary-report/SECURITY_ANALYSIS.md` created
+
+
+---
+
+## Day 8: Mainnet Fork Testing — Arbitrum + Cross-Chain API
+
+### 8.1 Start Arbitrum mainnet fork
+
+```bash
+source .env
+anvil --fork-url $ARBITRUM_RPC_URL --port 8546
+# Runs on port 8546 to avoid conflict with Base fork on 8545
+```
+
+### 8.2 Create Arbitrum fork test file
+
+**File**: `test/ForkArbitrum.t.sol` (NEW)
+
+Same test cases as ForkBase.t.sol but with Arbitrum addresses:
+- USDC: `0xaf88d065e77c8cC2239327C5EDb3A432268e5831`
+- Aave Pool: `0x794a61358D6845594F94dc1DB02A252b5b4814aD`
+
+```bash
+forge test --match-path test/ForkArbitrum.t.sol --fork-url $ARBITRUM_RPC_URL -vvv
+```
+
+### 8.3 Test dual-chain vault-context API against forks
+
+With both forks running (Base on 8545, Arbitrum on 8546):
+
+**Temporarily update** `frontend/.env.local` to point to local forks:
+```
+NEXT_PUBLIC_BASE_RPC_URL=http://127.0.0.1:8545
+NEXT_PUBLIC_ARBITRUM_RPC_URL=http://127.0.0.1:8546
+```
+
+### 8.4 Upgrade vault-context API for dual-chain reads
+
+**File**: `frontend/app/api/vault-context/route.ts`
+
+Key changes:
+1. Create TWO viem publicClients (Base RPC + Arbitrum RPC)
+2. Use `Promise.all` to read Aave reserve data from both chains concurrently
+3. Return both APYs + gas prices + cross-chain cost calculation
+
+New response shape:
+```typescript
+{
+  success: true,
+  data: {
+    base: {
+      supplyApy: 3.2,
+      gasPriceGwei: 0.01,
+      estimatedTxCostUsd: 0.002
+    },
+    arbitrum: {
+      supplyApy: 5.3,
+      gasPriceGwei: 0.1,
+      estimatedTxCostUsd: 0.02
+    },
+    crossChain: {
+      deltaApy: 2.1,
+      estimatedBridgeFeeUsd: 0.5,
+      estimatedReturnBridgeFeeUsd: 0.5,
+      destinationGasCostUsd: 0.02,
+      slippageEstimateUsd: 0.1,
+      netAdvantage: null    // calculated with principal from query params
+    },
+    vault: {
+      idleUsdc: 1000,
+      strategyBalance: 200,
+      userUsdc: 1200
+    },
+    timestamp: 1712345678
+  }
+}
+```
+
+### 8.5 Implement honest cross-chain cost formula
+
+```
+Net_Advantage = (Principal × ΔAPY × Days/365)
+              - Bridge_Fee_Out
+              - Bridge_Fee_Return
+              - Gas_Destination (deposit + invest on arrival chain)
+              - Slippage_Estimate (0.1% of principal)
+```
+
+Calculated using query params `principal` and `holdingDays`.
+
+### 8.6 Test vault-context API against forks
+
+```bash
+# Start frontend
+cd frontend && npm run dev
+
+# Test — should return real APY data from both forked chains
+curl "http://localhost:3000/api/vault-context?principal=500&holdingDays=30"
+```
+
+### 8.7 Verification — Day 8
+- [ ] All Arbitrum fork tests pass
+- [ ] Both Base and Arbitrum forks running concurrently
+- [ ] vault-context API returns real APY from both chains
+- [ ] `netAdvantage` calculation is correct (manually verify the math)
+- [ ] Small principal (20 USDC, 30 days): netAdvantage is negative (correct)
+- [ ] Large principal (5000 USDC, 90 days): netAdvantage may be positive
+
+
+---
+
+## Day 9: Canary Deployment — Base Mainnet (Level 4)
+
+Now that fork tests pass, we deploy with real money. Small amounts only.
+
+### 9.1 Fund the Base Wallet (User does manually)
+
+1. Open MetaMask, copy `0x` address
+2. In OKX: ETH → Withdraw → **select Base network** (NOT ERC20)
+3. Withdraw 0.01 ETH (~$20)
+4. After arrival, swap ~20 USDC on [app.uniswap.org](https://app.uniswap.org) (select Base network)
+5. Verify: MetaMask shows ETH + USDC on Base
+
+### 9.2 Deploy to Base mainnet
+
+```bash
+source .env
+forge script script/Deploy.s.sol:DeployScript \
+  --rpc-url $BASE_RPC_URL \
+  --broadcast \
+  --verify \
+  --etherscan-api-key $BASESCAN_API_KEY
+```
+
+Record deployed addresses in `DEPLOYED_ADDRESSES.md`.
+
+### 9.3 Smoke test with real USDC (5 USDC only)
+
+Using cast or the frontend:
+
+```bash
+# Approve vault to spend 5 USDC
+cast send $USDC_BASE "approve(address,uint256)" $VAULT_BASE 5000000 \
+  --rpc-url $BASE_RPC_URL --private-key $PRIVATE_KEY
+
+# Deposit 5 USDC into vault
+cast send $VAULT_BASE "depositToken(address,uint256)" $USDC_BASE 5000000 \
+  --rpc-url $BASE_RPC_URL --private-key $PRIVATE_KEY
+
+# Check vault balance
+cast call $VAULT_BASE "getTokenBalance(address,address)" $USDC_BASE $YOUR_ADDRESS \
+  --rpc-url $BASE_RPC_URL
+
+# Invest 5 USDC into Aave
+cast send $VAULT_BASE "invest(address,uint256)" $USDC_BASE 5000000 \
+  --rpc-url $BASE_RPC_URL --private-key $PRIVATE_KEY
+
+# Check strategy balance
+cast call $VAULT_BASE "getStrategyBalance()" --rpc-url $BASE_RPC_URL
+
+# Divest 5 USDC back
+cast send $VAULT_BASE "divest(uint256)" 5000000 \
+  --rpc-url $BASE_RPC_URL --private-key $PRIVATE_KEY
+
+# Withdraw back to wallet
+cast send $VAULT_BASE "withdrawToken(address,uint256)" $USDC_BASE 5000000 \
+  --rpc-url $BASE_RPC_URL --private-key $PRIVATE_KEY
+```
+
+Verify each step on BaseScan.
+
+### 9.4 Verification — Day 9
+- [ ] VaultV3 + AaveStrategy deployed and verified on BaseScan
+- [ ] Deposit 5 USDC → vault balance shows 5 USDC
+- [ ] Invest → USDC moves to Aave (verify on BaseScan)
+- [ ] Divest → USDC returns to vault
+- [ ] Withdraw → USDC back in wallet
+- [ ] Full cycle completed with real money, no loss
+
+
+**Milestone: You now have verified contracts on BaseScan**
+
+Add the BaseScan link to your GitHub README and LinkedIn profile.
+
+---
+
+## Day 10: Canary Deployment — Arbitrum + Frontend Multi-Chain
+
+### 10.1 Fund Arbitrum wallet (User does manually)
+
+Option A: Withdraw ETH from OKX directly to Arbitrum → swap for USDC
+Option B: Bridge USDC from Base using Stargate/Across
+
+### 10.2 Deploy to Arbitrum
+
+```bash
+source .env
+forge script script/Deploy.s.sol:DeployScript \
+  --rpc-url $ARBITRUM_RPC_URL \
+  --broadcast \
+  --verify \
+  --etherscan-api-key $ARBISCAN_API_KEY
+```
+
+### 10.3 Smoke test on Arbitrum (5 USDC)
+
+Same cast commands as Day 9 but with Arbitrum addresses and RPC.
+
+### 10.4 Update frontend for multi-chain support
+
+**File**: `frontend/lib/wagmi.ts`
+- Support chain switching: `base | arbitrum | sepolia | anvil`
+
+**File**: `frontend/lib/aave.ts`
+- Add Base/Arbitrum Aave Pool + USDC addresses with chain-aware resolution
+
+**File**: `frontend/lib/vault.ts`
+- Contract addresses remain env-based (already set up from Day 4)
+
+**File**: `frontend/.env.local`
+```
+NEXT_PUBLIC_CHAIN=base
+NEXT_PUBLIC_VAULT_ADDRESS=<base vault address>
+NEXT_PUBLIC_USDC_ADDRESS=0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913
+NEXT_PUBLIC_BASE_RPC_URL=https://base-mainnet.g.alchemy.com/v2/YOUR_KEY
+NEXT_PUBLIC_ARBITRUM_RPC_URL=https://arb-mainnet.g.alchemy.com/v2/YOUR_KEY
+NEXT_PUBLIC_BASE_VAULT_ADDRESS=<base vault address>
+NEXT_PUBLIC_ARBITRUM_VAULT_ADDRESS=<arb vault address>
+```
+
+### 10.5 Test frontend deposit + invest on Base
+
+- Connect MetaMask to Base
+- Deposit 5 USDC via frontend
+- Invest via AdminPanel
+- Verify on BaseScan
+- Divest + withdraw
+
+### 10.6 Verification — Day 10
+- [ ] Contracts deployed + verified on Arbitrum (Arbiscan)
+- [ ] Smoke test passed on Arbitrum with real USDC
+- [ ] Frontend connects to Base, shows real USDC balances
+- [ ] Deposit → invest → divest cycle works via frontend on Base
+- [ ] DEPLOYED_ADDRESSES.md updated with both chains
+
+
+---
+
+## Day 11: AI Cross-Chain Advisory (Dify + Knowledge Base)
+
+### 11.1 Update vault-context API for real mainnet RPCs
+
+**File**: `frontend/app/api/vault-context/route.ts`
+
+Switch from fork URLs to real mainnet RPC URLs (if still pointing to forks from Day 8).
+
+### 11.2 Update Aave_Strategy_Context.md
+
+**File**: `docs/Aave_Strategy_Context.md`
+
+Add cross-chain advisory rules:
+- Net_Advantage formula with ALL cost components
+- Thresholds:
+  - Net_Advantage > $1: suggest migration
+  - Net_Advantage $0-$1: suggest staying (not worth risk)
+  - Net_Advantage <= $0: must block migration suggestion
+- Bridge risk warnings
+- Breakeven calculation: `Total_Bridge_Cost / (Principal × ΔAPY / 365)`
+- Small principal rule: <$100 almost never justifies cross-chain
+
+### 11.3 Update Dify Chatflow (User does manually)
+
+- Update HTTP Request node URL → real vault-context API
+- Update LLM system prompt:
+  - Add `"cross_chain_migrate"` action type
+  - Add `"source_chain"` and `"target_chain"` to action_data
+  - Include bridge risk warning in strategy_logic when recommending migration
+- Upload updated Knowledge Base document
+
+New LLM output schema for cross-chain:
+```json
+{
+  "action": "suggest",
+  "strategy_logic": "Arbitrum Aave USDC yields 5.3% vs Base 3.2%. For 500 USDC held 30 days, net advantage is $1.80 after bridge fees. Breakeven: 17 days.",
+  "action_data": {
+    "type": "cross_chain_migrate",
+    "amount": 500,
+    "token": "USDC",
+    "source_chain": "base",
+    "target_chain": "arbitrum",
+    "net_apy": 5.3,
+    "delta_apy": 2.1,
+    "net_advantage_usd": 1.80,
+    "breakeven_days": 17,
+    "risk_level": "medium"
+  }
+}
+```
+
+### 11.4 Update chat route.ts for cross-chain intents
+
+**File**: `frontend/app/api/chat/route.ts`
+
+- Pass both-chain vault context URL in Dify inputs
+- Handle `cross_chain_migrate` action type
+- Pass through to frontend for bridge widget rendering
+
+### 11.5 Verification — Day 11
+- [ ] Dify returns cross-chain advisory with real APY
+- [ ] "should I invest?" compares both chains
+- [ ] Small principal (20 USDC): AI says "stay on Base"
+- [ ] Multi-turn conversation preserved
+
+
+---
+
+## Day 12-13: LI.FI Bridge Widget + Risk Modal
+
+### 12.1 Install LI.FI dependencies
+
+```bash
+cd frontend
+npm install @lifi/widget @lifi/sdk
+# Check peer deps — may need @mui/material @emotion/react @emotion/styled
+```
+
+### 12.2 Create CrossChainRiskModal component
+
+**File**: `frontend/components/CrossChainRiskModal.tsx` (NEW)
+
+Mandatory modal before any bridge execution:
+- Bridge protocol risk warning (smart contract exploit = total loss possible)
+- Time delay warning (5 min to 2 hours)
+- Non-custody disclaimer
+- Checkbox: "I understand the risks" (must check to unlock Confirm)
+- Confirm / Cancel buttons
+
+### 12.3 Create CrossChainWidget component
+
+**File**: `frontend/components/CrossChainWidget.tsx` (NEW)
+
+LI.FI Widget must be client-side only:
+```typescript
+import dynamic from 'next/dynamic'
+const LiFiWidget = dynamic(
+  () => import('@lifi/widget').then(mod => mod.LiFiWidget),
+  { ssr: false }
+)
+```
+
+Pre-fills from AI intent:
+```typescript
+const widgetConfig: WidgetConfig = {
+  integrator: 'AI-Yield-Navigator',
+  fromChain: 8453,       // Base
+  toChain: 42161,        // Arbitrum
+  fromToken: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+  toToken: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831',
+  fromAmount: intent.amount.toString(),
+}
+```
+
+### 12.4 Update AIPanel for cross-chain flow
+
+**File**: `frontend/components/AIPanel.tsx`
+
+When `action_data.type === 'cross_chain_migrate'`:
+1. Show AI suggestion bubble with cross-chain reasoning
+2. "Migrate" button → opens CrossChainRiskModal
+3. After risk acceptance → render CrossChainWidget (LI.FI)
+4. After bridge → prompt user to deposit into destination Vault
+
+### 12.5 Create YieldRadar component (stretch goal)
+
+**File**: `frontend/components/YieldRadar.tsx` (NEW)
+
+Visual comparison: two cards showing Base vs Arbitrum APY, gas, net yield.
+
+### 12.6 Verification — Day 12-13
+- [ ] LI.FI Widget renders (no SSR error)
+- [ ] Risk modal blocks widget until checkbox confirmed
+- [ ] Widget pre-fills chain/token/amount from AI intent
+- [ ] Real bridge test: 2-5 USDC from Base → Arbitrum
+- [ ] After bridge, deposit into Arbitrum Vault works
+
+
+---
+
+## Day 14: Integration Testing + Documentation
+
+### 14.1 Full end-to-end test on Base
+
+1. [ ] Connect MetaMask to Base
+2. [ ] Deposit 10 USDC into Base Vault
+3. [ ] Invest via AdminPanel → USDC to Base Aave
+4. [ ] AI: "check my yield" → shows real APY
+5. [ ] AI: "should I invest?" → compares Base vs Arbitrum
+6. [ ] Divest → USDC returns to Vault
+7. [ ] Withdraw → USDC back in wallet
+
+### 14.2 Cross-chain migration test
+
+1. [ ] AI suggests migration to Arbitrum (if APY higher)
+2. [ ] Risk modal appears with warnings
+3. [ ] Accept → LI.FI widget pre-filled
+4. [ ] Bridge 5 USDC Base → Arbitrum
+5. [ ] Verify USDC arrives on Arbitrum (Arbiscan)
+6. [ ] Deposit into Arbitrum Vault → invest into Arbitrum Aave
+7. [ ] Verify yield accrual
+
+### 14.3 Safety tests
+
+1. [ ] Small principal (5 USDC): AI says "stay on Base"
+2. [ ] Equal APY: AI says "no advantage to migrate"
+3. [ ] Deviation interceptor: re-check APY before confirm
+4. [ ] Multi-turn: "check yield" → "should I migrate?" → "yes do it"
+
+### 14.4 Documentation
+
+- Update `DEPLOYED_ADDRESSES.md` with all mainnet addresses
+- Update `todo.md` with Day 6-14 section
+- Create `summary-report/DAY6-14_COMPLETE.md`
+- Ensure `summary-report/SECURITY_ANALYSIS.md` is complete
+
+
+---
+
+## Files Summary
+
+### New Files
+| File | Purpose |
+|------|---------|
+| `test/ForkBase.t.sol` | Fork tests against real Base Aave (8 test cases) |
+| `test/ForkArbitrum.t.sol` | Fork tests against real Arbitrum Aave |
+| `summary-report/SECURITY_ANALYSIS.md` | Slither findings + risk documentation |
+| `frontend/components/CrossChainRiskModal.tsx` | Mandatory risk warning before bridge |
+| `frontend/components/CrossChainWidget.tsx` | LI.FI bridge widget with AI pre-fill |
+| `frontend/components/YieldRadar.tsx` | Visual APY comparison (stretch goal) |
+
+### Modified Files
+| File | Changes |
+|------|---------|
+| `script/Deploy.s.sol` | Add Base/Arbitrum chain detection, skip MockERC20 on mainnet |
+| `foundry.toml` | Add Base/Arbitrum RPC + Etherscan config |
+| `.env` | Add Base/Arbitrum RPC URLs + API keys |
+| `frontend/.env.local` | Multi-chain env vars |
+| `frontend/lib/aave.ts` | Add Base/Arbitrum Aave Pool + USDC addresses |
+| `frontend/lib/wagmi.ts` | Support base/arbitrum chain selection |
+| `frontend/app/api/vault-context/route.ts` | Dual-chain concurrent reads, cross-chain cost formula |
+| `frontend/app/api/chat/route.ts` | Handle cross_chain_migrate action type |
+| `frontend/components/AIPanel.tsx` | Cross-chain suggestion + bridge flow |
+| `docs/Aave_Strategy_Context.md` | Cross-chain advisory rules + risk thresholds |
+| `DEPLOYED_ADDRESSES.md` | Add Base + Arbitrum mainnet addresses |
+
+### Manual Tasks (User)
+| Task | When |
+|------|------|
+| Get Alchemy/BaseScan/Arbiscan API keys | Day 6 |
+| Fund Base wallet (OKX → Base, 0.01 ETH + 20 USDC) | Day 9 |
+| Fund Arbitrum wallet | Day 10 |
+| Update Dify Chatflow for cross-chain | Day 11 |
+| Upload updated Knowledge Base | Day 11 |
+
+---
+
+## Key Risks and Mitigations
+
+| Risk | Mitigation |
+|------|-----------|
+| Unaudited contracts with real USDC | Fork test first. Slither analysis. Max 50 USDC total. Personal only. |
+| Bridge exploit during cross-chain | Mandatory risk modal. Test with 2-5 USDC. |
+| Aave Pool address incorrect | Verify with `cast call getReservesList()` before deploying |
+| Real USDC has no `mint()` | Only use what you swap. Don't over-invest. |
+| LI.FI widget SSR crash | Dynamic import with `{ ssr: false }` |
+| Supply cap exceeded | Fork test for large deposit. Vault returns funds on failure. |
+| Real USDC may not support EIP-2612 permit | Fork test permit. If fails, fallback to approve+deposit. |
+
+---
+
+## Architecture Principles
+
+1. **Fork before deploy**: All protocol integrations validated on mainnet fork before real money touches contracts
+2. **Same contract, multiple chains**: VaultV3 + AaveStrategy are chain-agnostic. Only constructor params change.
+3. **Hub-and-spoke capital model**: Base is home base. Arbitrum is satellite. Capital concentrates by default.
+4. **Honest cost modeling**: Cross-chain formula includes ALL costs (bridge × 2 + destination gas + slippage).
+5. **Bridge risk isolation**: LI.FI handles bridge execution. Our contracts never touch bridge funds.
+6. **Progressive trust**: Fork test → cast smoke test (5 USDC) → frontend test → full integration. Never skip levels.
+
+---
