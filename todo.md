@@ -2145,11 +2145,11 @@ Mainnet deployment deploys ONLY:
 ```
 
 ### 6.6 Verification — Day 6
-- [ ] Alchemy RPC URLs work (`cast block-number --rpc-url $BASE_RPC_URL`)
-- [ ] BaseScan + Arbiscan API keys obtained
-- [ ] Aave Pool addresses verified (getReservesList returns USDC)
-- [ ] Deploy.s.sol updated with Base/Arbitrum chain detection
-- [ ] `forge build` passes with updated script
+- [x] Alchemy RPC URLs work (`cast block-number --rpc-url $BASE_RPC_URL`)
+- [x] BaseScan + Arbiscan API keys obtained
+- [x] Aave Pool addresses verified (getReservesList returns USDC)
+- [x] Deploy.s.sol updated with Base/Arbitrum chain detection
+- [x] `forge build` passes with updated script
 
 
 ---
