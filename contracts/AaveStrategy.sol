@@ -6,8 +6,27 @@ import "./IStrategy.sol";
 
 /// @dev Minimal Aave V3 Pool interface — only the two functions we need
 interface IAavePool {
+    struct ReserveData {
+        uint256 configuration;
+        uint128 liquidityIndex;
+        uint128 currentLiquidityRate;
+        uint128 variableBorrowIndex;
+        uint128 currentVariableBorrowRate;
+        uint128 currentStableBorrowRate;
+        uint40 lastUpdateTimestamp;
+        uint16 id;
+        address aTokenAddress;
+        address stableDebtTokenAddress;
+        address variableDebtTokenAddress;
+        address interestRateStrategyAddress;
+        uint128 accruedToTreasury;
+        uint128 unbacked;
+        uint128 isolationModeTotalDebt;
+    }
+
     function supply(address asset, uint256 amount, address onBehalfOf, uint16 referralCode) external;
     function withdraw(address asset, uint256 amount, address to) external returns (uint256);
+    function getReserveData(address asset) external view returns (ReserveData memory);
 }
 
 /// @title AaveStrategy - Routes Vault funds into Aave V3 to earn yield
@@ -30,6 +49,9 @@ contract AaveStrategy is IStrategy {
     /// @notice Aave V3 Pool address (MockAavePool locally, real pool on Sepolia)
     address public aavePool;
 
+    /// @notice aToken address for the configured reserve. Remains zero in mock environments.
+    address public aToken;
+
     /// @notice Internal accounting: how much is currently in Aave
     uint256 private _depositedToPool;
 
@@ -46,6 +68,7 @@ contract AaveStrategy is IStrategy {
         vault = _vault;
         token = _token;
         aavePool = _aavePool;
+        _resolveAToken();
     }
 
     /// @notice Deposit tokens into Aave. Tokens must be in this contract before calling.
@@ -53,6 +76,7 @@ contract AaveStrategy is IStrategy {
     ///      Vault's invest() will then revert (with tokens safely back in vault).
     function deposit(uint256 amount) external onlyVault returns (bool success) {
         require(IERC20(token).balanceOf(address(this)) >= amount, "AaveStrategy: insufficient balance");
+        _resolveAToken();
 
         // Approve Aave pool to pull tokens from this strategy
         IERC20(token).approve(aavePool, amount);
@@ -85,6 +109,9 @@ contract AaveStrategy is IStrategy {
 
     /// @notice Returns how many tokens are currently deployed in Aave
     function totalAssets() external view returns (uint256) {
+        if (aToken != address(0)) {
+            return IERC20(aToken).balanceOf(address(this));
+        }
         return _depositedToPool;
     }
 
@@ -106,5 +133,15 @@ contract AaveStrategy is IStrategy {
         } catch {
             return false;
         }
+    }
+
+    /// @dev Resolves the reserve's aToken address on real Aave pools.
+    ///      In mock environments this call is expected to fail and fall back to internal accounting.
+    function _resolveAToken() internal {
+        if (aToken != address(0)) return;
+
+        try IAavePool(aavePool).getReserveData(token) returns (IAavePool.ReserveData memory reserveData) {
+            aToken = reserveData.aTokenAddress;
+        } catch {}
     }
 }
