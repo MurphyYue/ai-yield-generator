@@ -1,0 +1,4 @@
+interface:
+  display_name: "Mission Fullstack"
+  short_description: "Tutor missions for Senior Web3 full-stack growth"
+  default_prompt: "Use $mission-fullstack to execute this tutor mission as real Web3 product work and end with a structured learning summary for a Senior Web3 Full-stack Engineer path."

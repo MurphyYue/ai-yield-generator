@@ -1,6 +1,6 @@
-# Senior Architect Rubric
+# Senior Fullstack Rubric
 
-Use this rubric to judge whether the mission result is architect-level.
+Use this rubric to judge whether the mission result meets the standard of a Senior Web3 Full-stack Engineer with strong DeFi competence.
 
 ## 1. Boundaries are explicit
 - Roles, permissions, ownership, and data boundaries are clear.
@@ -25,3 +25,7 @@ Use this rubric to judge whether the mission result is architect-level.
 ## 6. Product reality is acknowledged
 - State clearly whether the result is local-demo quality, testnet-ready, or closer to production.
 - Name the remaining blockers without hiding them.
+
+## 7. Full-stack integration is complete
+- Contract, backend, frontend, wallet, deployment, and AI boundaries are connected coherently when the mission requires them.
+- The result does not stop at one layer if the product behavior depends on another.

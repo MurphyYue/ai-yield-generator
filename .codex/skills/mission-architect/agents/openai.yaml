@@ -1,4 +1,0 @@
-interface:
-  display_name: "Mission Architect"
-  short_description: "Tutor missions with architecture learning"
-  default_prompt: "Use $mission-architect to execute this tutor mission as real Web3/FinTech product work and end with a structured learning summary."

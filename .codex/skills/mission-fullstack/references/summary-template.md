@@ -28,8 +28,8 @@ Use this structure after any substantial tutor mission.
 ## Frontend Analogy
 - Map the concept to frontend/backend architecture the user already knows.
 
-## Architect Lens
-- Explain how to justify the design decision in a senior Web3/FinTech architect discussion.
+## Senior Engineer Lens
+- Explain how to justify the design decision in a senior Web3 full-stack engineering discussion.
 
 ## Open Questions
 - State what remains weak, deferred, or product-dependent.
