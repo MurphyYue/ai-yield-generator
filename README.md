@@ -1,109 +1,48 @@
-# Foundry Docker Development Environment
+# AI-Powered Cross-Chain Yield Navigator
 
-Complete Foundry development environment in Docker for Ethereum smart contract development.
+## What This Is
+One paragraph: AI-driven DeFi vault that compares yield across Base and Arbitrum Aave V3...
 
-## What's Included
+## Architecture
+┌─────────────────────────────────────────────────────────────┐
+│                    FRONTEND (Next.js)                        │
+│                                                              │
+│  AIPanel → vault-context API → reads BOTH chains             │
+│    │              │                  │                        │
+│    │       Base Aave Pool     Arbitrum Aave Pool              │
+│    │              │                  │                        │
+│    ▼              ▼                  ▼                        │
+│  "Arb is 2.1% higher. Net advantage $3 after fees."         │
+│    │                                                         │
+│    ▼                                                         │
+│  Risk Modal → LI.FI Widget → Bridge USDC Base↔Arbitrum      │
+│                                    │                         │
+│                                    ▼                         │
+│                     Deposit into destination Vault            │
+└─────────────────────────────────────────────────────────────┘
 
-- **forge** - Smart contract testing and building
-- **cast** - CLI tool for interacting with Ethereum contracts
-- **anvil** - Local Ethereum node for testing
-- **chisel** - Interactive Solidity REPL
+CONTRACT LAYER:
+┌──────────────────────┐         ┌──────────────────────┐
+│   Base (8453)        │  LI.FI  │  Arbitrum (42161)    │
+│                      │◄═══════►│                      │
+│  VaultV3             │  bridge │  VaultV3             │
+│  AaveStrategy        │         │  AaveStrategy        │
+│  → Base Aave Pool    │         │  → Arb Aave Pool     │
+│  Real USDC           │         │  Real USDC           │
+└──────────────────────┘         └──────────────────────┘
 
-## Prerequisites
+## Tech Stack
+Solidity, Foundry, Next.js, wagmi/viem, Dify AI, LI.FI, Base, Arbitrum
 
-- Docker Desktop installed and running on macOS
+## Engineering Process
+"Followed 5-level DeFi workflow: unit tests → mainnet fork testing → canary deployment..."
 
-## Quick Start
+## Key Features
+- EIP-2612 Permit (one-click deposit)
+- Strategy Pattern (swappable yield protocols)
+- AI advisory with real on-chain data + RAG
+- Cross-chain migration with LI.FI bridge
+- Safety: fork tests, Slither analysis, risk modals
 
-### Option 1: Using Docker Compose (Recommended)
-
-1. **Build and start the container:**
-   ```bash
-   docker-compose up -d --build
-   ```
-
-2. **Enter the container:**
-   ```bash
-   docker-compose exec foundry bash
-   ```
-
-3. **Verify installation:**
-   ```bash
-   forge --version
-   cast --version
-   anvil --version
-   ```
-
-4. **Stop the container:**
-   ```bash
-   docker-compose down
-   ```
-
-### Option 2: Using Docker CLI
-
-1. **Build the image:**
-   ```bash
-   docker build -t foundry-dev .
-   ```
-
-2. **Run a container:**
-   ```bash
-   docker run -it -v $(pwd):/app -p 8545:8545 foundry-dev
-   ```
-
-## Usage Examples
-
-### Create a new project
-```bash
-docker-compose exec foundry forge init my-project
-cd my-project
-```
-
-### Run tests
-```bash
-docker-compose exec foundry forge test
-```
-
-### Build contracts
-```bash
-docker-compose exec foundry forge build
-```
-
-### Start a local node (Anvil)
-```bash
-docker-compose exec foundry anvil
-```
-
-### In a separate terminal, interact with the local node
-```bash
-docker-compose exec foundry cast balance <address> --rpc-url http://localhost:8545
-```
-
-## Docker Compose Commands
-
-- `docker-compose up -d --build` - Build and start container in background
-- `docker-compose exec foundry bash` - Open shell in container
-- `docker-compose logs -f foundry` - View container logs
-- `docker-compose down` - Stop and remove container
-- `docker-compose restart` - Restart container
-
-## Mounted Volumes
-
-- Current directory is mounted to `/app` in the container
-- Foundry cache is persisted in a named volume
-
-## Troubleshooting
-
-**If Docker daemon is not running:**
-- Open Docker Desktop from Applications
-- Wait for Docker to start (check menu bar icon)
-
-**If port 8545 is already in use:**
-- Change the port mapping in `docker-compose.yml`
-- Or stop the service using port 8545
-
-## Additional Resources
-
-- [Foundry Book](https://book.getfoundry.sh/)
-- [Foundry GitHub](https://github.com/foundry-rs/foundry)
-- [Solidity Documentation](https://docs.soliditylang.org/)
+## Deployed Contracts
+Link to BaseScan / Arbiscan verified contracts
