@@ -1,156 +1,192 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createPublicClient, http } from 'viem'
-import { sepolia } from 'viem/chains'
+import { arbitrum, base } from 'viem/chains'
 import {
-  AAVE_LISTED_USDT_SEPOLIA,
   AAVE_POOL_ABI,
-  AAVE_POOL_SEPOLIA,
   DEFAULT_GAS_UNITS,
+  MAINNET_AAVE_MARKETS,
   RAY,
   VIRTUAL_ETH_PRICE_USD,
 } from '@/lib/aave'
 
+const DEFAULT_HOLDING_DAYS = 30
+const ESTIMATED_BRIDGE_FEE_USD = 0.5
+const ESTIMATED_RETURN_BRIDGE_FEE_USD = 0.5
+const SLIPPAGE_RATE = 0.001
+
 interface VaultSnapshot {
-  idleUsdt: number
-  strategyUsdt: number
-  userUsdt: number
+  idleUsdc: number
+  strategyUsdc: number
+  userUsdc: number
+}
+
+interface ChainMarketSnapshot {
+  chainId: number
+  name: string
+  token: 'USDC'
+  tokenAddress: `0x${string}`
+  poolAddress: `0x${string}`
+  supplyApy: number
+  gasPriceGwei: number
+  estimatedTxCostUsd: number
+}
+
+interface CrossChainSnapshot {
+  sourceChain: 'base'
+  targetChain: 'arbitrum'
+  principal: number
+  holdingDays: number
+  deltaApy: number
+  grossYieldAdvantageUsd: number
+  estimatedBridgeFeeUsd: number
+  estimatedReturnBridgeFeeUsd: number
+  destinationGasCostUsd: number
+  slippageEstimateUsd: number
+  totalEstimatedCostUsd: number
+  netAdvantageUsd: number | null
 }
 
 interface VaultContextResponse {
-  success: boolean
+  success: true
   data: {
-    aave: {
-      supplyApy: number
-      token: 'USDT'
-      listedTokenAddress: `0x${string}`
-    }
-    gas: {
-      gasPriceGwei: number
-      estimatedTxCostUsd: number
-    }
-    netApy: number
+    base: ChainMarketSnapshot
+    arbitrum: ChainMarketSnapshot
+    crossChain: CrossChainSnapshot
     vault: VaultSnapshot
     timestamp: number
-    source: typeof process.env.NEXT_PUBLIC_CHAIN | 'fallback'
   }
-  error?: string
 }
 
-function parseNumber(value: string | null): number {
-  if (!value) return 0
+function parseNumber(value: string | null, fallback = 0): number {
+  if (!value) return fallback
   const parsed = Number(value)
-  return Number.isFinite(parsed) ? parsed : 0
+  return Number.isFinite(parsed) ? parsed : fallback
 }
 
 function getVaultSnapshot(request: NextRequest): VaultSnapshot {
   const params = request.nextUrl.searchParams
 
   return {
-    idleUsdt: parseNumber(params.get('vaultIdle')),
-    strategyUsdt: parseNumber(params.get('strategyBalance')),
-    userUsdt: parseNumber(params.get('userUsdtBalance')),
+    idleUsdc: parseNumber(params.get('vaultIdleUsdc') ?? params.get('vaultIdle')),
+    strategyUsdc: parseNumber(params.get('strategyUsdc') ?? params.get('strategyBalance')),
+    userUsdc: parseNumber(params.get('userUsdcBalance') ?? params.get('userUsdtBalance')),
   }
 }
 
-function buildFallbackResponse(vault: VaultSnapshot, error?: string): VaultContextResponse {
-  const supplyApy = 4.2
-  const gasPriceGwei = 1
-  const estimatedTxCostUsd = 0.01
-  const netApy =
-    vault.idleUsdt > 0
-      ? (((vault.idleUsdt * supplyApy) / 100) - estimatedTxCostUsd) / vault.idleUsdt * 100
-      : supplyApy
+function getRpcUrl(chain: 'base' | 'arbitrum'): string | undefined {
+  if (chain === 'base') {
+    return process.env.BASE_RPC_URL || process.env.NEXT_PUBLIC_BASE_RPC_URL
+  }
 
+  return process.env.ARBITRUM_RPC_URL || process.env.NEXT_PUBLIC_ARBITRUM_RPC_URL
+}
+
+async function getChainSnapshot(chain: 'base' | 'arbitrum'): Promise<ChainMarketSnapshot> {
+  const rpcUrl = getRpcUrl(chain)
+  if (!rpcUrl) {
+    throw new Error(`Missing ${chain} RPC configuration`)
+  }
+
+  const market = MAINNET_AAVE_MARKETS[chain]
+  const client = createPublicClient({
+    chain: chain === 'base' ? base : arbitrum,
+    transport: http(rpcUrl),
+  })
+
+  const [reserveData, gasPrice] = await Promise.all([
+    client.readContract({
+      address: market.pool,
+      abi: AAVE_POOL_ABI,
+      functionName: 'getReserveData',
+      args: [market.usdc],
+    }),
+    client.getGasPrice(),
+  ])
+
+  const supplyApy = (Number(reserveData.currentLiquidityRate) / Number(RAY)) * 100
+  const gasPriceGwei = Number(gasPrice) / 1e9
+  const estimatedTxCostUsd =
+    (Number(gasPrice * DEFAULT_GAS_UNITS) / 1e18) * VIRTUAL_ETH_PRICE_USD
 
   return {
-    success: true,
-    data: {
-      aave: {
-        supplyApy,
-        token: 'USDT',
-        listedTokenAddress: AAVE_LISTED_USDT_SEPOLIA,
-      },
-      gas: {
-        gasPriceGwei,
-        estimatedTxCostUsd,
-      },
-      netApy,
-      vault,
-      timestamp: Math.floor(Date.now() / 1000),
-      source: 'fallback',
-    },
-    ...(error ? { error } : {}),
+    chainId: market.chainId,
+    name: market.name,
+    token: 'USDC',
+    tokenAddress: market.usdc,
+    poolAddress: market.pool,
+    supplyApy,
+    gasPriceGwei,
+    estimatedTxCostUsd,
+  }
+}
+
+function buildCrossChainSnapshot(
+  baseSnapshot: ChainMarketSnapshot,
+  arbitrumSnapshot: ChainMarketSnapshot,
+  request: NextRequest
+): CrossChainSnapshot {
+  const params = request.nextUrl.searchParams
+  const principal = parseNumber(params.get('principal'), 0)
+  const holdingDays = parseNumber(params.get('holdingDays'), DEFAULT_HOLDING_DAYS)
+
+  const deltaApy = arbitrumSnapshot.supplyApy - baseSnapshot.supplyApy
+  const grossYieldAdvantageUsd =
+    principal > 0 ? principal * (deltaApy / 100) * (holdingDays / 365) : 0
+  const destinationGasCostUsd = arbitrumSnapshot.estimatedTxCostUsd * 2
+  const slippageEstimateUsd = principal * SLIPPAGE_RATE
+  const totalEstimatedCostUsd =
+    ESTIMATED_BRIDGE_FEE_USD +
+    ESTIMATED_RETURN_BRIDGE_FEE_USD +
+    destinationGasCostUsd +
+    slippageEstimateUsd
+  const netAdvantageUsd =
+    principal > 0 ? grossYieldAdvantageUsd - totalEstimatedCostUsd : null
+
+  return {
+    sourceChain: 'base',
+    targetChain: 'arbitrum',
+    principal,
+    holdingDays,
+    deltaApy,
+    grossYieldAdvantageUsd,
+    estimatedBridgeFeeUsd: ESTIMATED_BRIDGE_FEE_USD,
+    estimatedReturnBridgeFeeUsd: ESTIMATED_RETURN_BRIDGE_FEE_USD,
+    destinationGasCostUsd,
+    slippageEstimateUsd,
+    totalEstimatedCostUsd,
+    netAdvantageUsd,
   }
 }
 
 export async function GET(request: NextRequest) {
-  const vault = getVaultSnapshot(request)
-  const requestedChain = process.env.NEXT_PUBLIC_CHAIN?.toLowerCase()
-
-  if (requestedChain && requestedChain !== 'sepolia') {
-    return NextResponse.json(buildFallbackResponse(vault))
-  }
-
-  const rpcUrl =
-    process.env.SEPOLIA_RPC_URL ||
-    process.env.NEXT_PUBLIC_ALCHEMY_RPC_URL ||
-    process.env.NEXT_PUBLIC_SEPOLIA_RPC_URL
-
-  if (!rpcUrl) {
-    return NextResponse.json(
-      buildFallbackResponse(vault, 'Missing Sepolia RPC configuration; returning fallback market data.')
-    )
-  }
-
   try {
-    const client = createPublicClient({
-      chain: sepolia,
-      transport: http(rpcUrl),
-    })
-
-    const [reserveData, gasPrice] = await Promise.all([
-      client.readContract({
-        address: AAVE_POOL_SEPOLIA,
-        abi: AAVE_POOL_ABI,
-        functionName: 'getReserveData',
-        args: [AAVE_LISTED_USDT_SEPOLIA],
-      }),
-      client.getGasPrice(),
+    const vault = getVaultSnapshot(request)
+    const [baseSnapshot, arbitrumSnapshot] = await Promise.all([
+      getChainSnapshot('base'),
+      getChainSnapshot('arbitrum'),
     ])
 
-    const currentLiquidityRate = reserveData.currentLiquidityRate
+    const crossChain = buildCrossChainSnapshot(baseSnapshot, arbitrumSnapshot, request)
 
-    const supplyApy = (Number(currentLiquidityRate) / Number(RAY)) * 100
-    const gasPriceGwei = Number(gasPrice) / 1e9
-    const estimatedTxCostUsd =
-      (Number(gasPrice * DEFAULT_GAS_UNITS) / 1e18) * VIRTUAL_ETH_PRICE_USD
-    const netApy = process.env.NEXT_PUBLIC_CHAIN?.toLowerCase() === 'sepolia' && supplyApy > 20 ? 4.5 : vault.idleUsdt > 0
-      ? ((((vault.idleUsdt * supplyApy) / 100) - estimatedTxCostUsd) / vault.idleUsdt) * 100
-      : supplyApy
-    
     return NextResponse.json({
       success: true,
       data: {
-        aave: {
-          supplyApy,
-          token: 'USDT',
-          listedTokenAddress: AAVE_LISTED_USDT_SEPOLIA,
-        },
-        gas: {
-          gasPriceGwei,
-          estimatedTxCostUsd,
-        },
-        netApy,
+        base: baseSnapshot,
+        arbitrum: arbitrumSnapshot,
+        crossChain,
         vault,
         timestamp: Math.floor(Date.now() / 1000),
-        source: process.env.NEXT_PUBLIC_CHAIN?.toLowerCase(),
       },
     } satisfies VaultContextResponse)
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown Aave data fetch failure'
+    const message = error instanceof Error ? error.message : 'Unknown vault context failure'
 
     return NextResponse.json(
-      buildFallbackResponse(vault, `Unable to fetch live Aave data: ${message}`)
+      {
+        success: false,
+        error: message,
+      },
+      { status: 500 }
     )
   }
 }
