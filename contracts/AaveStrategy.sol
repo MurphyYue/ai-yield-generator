@@ -2,6 +2,8 @@
 pragma solidity ^0.8.24;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "./IStrategy.sol";
 
 /// @dev Minimal Aave V3 Pool interface — only the two functions we need
@@ -39,7 +41,9 @@ interface IAavePool {
 ///
 ///      Local testing:  deploy with MockAavePool address
 ///      Sepolia testnet: deploy with 0x6Ae43d3271ff6888e7Fc43Fd7321a503ff738951
-contract AaveStrategy is IStrategy {
+contract AaveStrategy is IStrategy, ReentrancyGuard {
+    using SafeERC20 for IERC20;
+
     /// @notice Vault address — only caller allowed to deposit/withdraw
     address public immutable vault;
 
@@ -47,7 +51,7 @@ contract AaveStrategy is IStrategy {
     address public immutable token;
 
     /// @notice Aave V3 Pool address (MockAavePool locally, real pool on Sepolia)
-    address public aavePool;
+    address public immutable aavePool;
 
     /// @notice aToken address for the configured reserve. Remains zero in mock environments.
     address public aToken;
@@ -74,35 +78,37 @@ contract AaveStrategy is IStrategy {
     /// @notice Deposit tokens into Aave. Tokens must be in this contract before calling.
     /// @dev If Aave.supply() reverts: catch block returns tokens to vault, returns false.
     ///      Vault's invest() will then revert (with tokens safely back in vault).
-    function deposit(uint256 amount) external onlyVault returns (bool success) {
+    function deposit(uint256 amount) external onlyVault nonReentrant returns (bool success) {
         require(IERC20(token).balanceOf(address(this)) >= amount, "AaveStrategy: insufficient balance");
         _resolveAToken();
 
         // Approve Aave pool to pull tokens from this strategy
-        IERC20(token).approve(aavePool, amount);
+        IERC20(token).forceApprove(aavePool, amount);
+        _depositedToPool += amount;
 
         try IAavePool(aavePool).supply(token, amount, address(this), 0) {
-            _depositedToPool += amount;
             emit Deposited(amount);
             return true;
         } catch {
             // Aave failed — return tokens to vault so nothing is lost
-            IERC20(token).approve(aavePool, 0); // clear approval
-            IERC20(token).transfer(vault, amount);
+            _depositedToPool -= amount;
+            IERC20(token).forceApprove(aavePool, 0); // clear approval
+            IERC20(token).safeTransfer(vault, amount);
             return false;
         }
     }
 
     /// @notice Withdraw tokens from Aave directly to Vault.
     /// @dev Aave sends tokens to `vault` address directly. If Aave fails, returns false.
-    function withdraw(uint256 amount) external onlyVault returns (bool success) {
+    function withdraw(uint256 amount) external onlyVault nonReentrant returns (bool success) {
         require(_depositedToPool >= amount, "AaveStrategy: exceeds deposited amount");
+        _depositedToPool -= amount;
 
         try IAavePool(aavePool).withdraw(token, amount, vault) {
-            _depositedToPool -= amount;
             emit Withdrawn(amount);
             return true;
         } catch {
+            _depositedToPool += amount;
             return false;
         }
     }
@@ -122,15 +128,16 @@ contract AaveStrategy is IStrategy {
 
     /// @notice Emergency: withdraw all funds back to Vault regardless of normal flow
     /// @dev Only Vault can call. Use when Aave is compromised or strategy is being replaced.
-    function emergencyWithdraw() external onlyVault returns (bool success) {
+    function emergencyWithdraw() external onlyVault nonReentrant returns (bool success) {
         if (_depositedToPool == 0) return true;
 
         uint256 amount = _depositedToPool;
+        _depositedToPool = 0;
         try IAavePool(aavePool).withdraw(token, amount, vault) {
-            _depositedToPool = 0;
             emit EmergencyWithdrawn(amount);
             return true;
         } catch {
+            _depositedToPool = amount;
             return false;
         }
     }

@@ -7,6 +7,7 @@ import "@openzeppelin/contracts/utils/Pausable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Permit.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "./IStrategy.sol";
 
 /// @title VaultV3 - Multi-Role Governance Vault with SoD (Separation of Duties)
@@ -17,6 +18,8 @@ import "./IStrategy.sol";
 ///      - OPERATOR_ROLE: Daily operations - AI automation, routine transactions
 ///      - TREASURER_ROLE: Fund management - large withdrawal approvals, fee settings
 contract VaultV3 is AccessControl, Pausable, ReentrancyGuard {
+    using SafeERC20 for IERC20;
+
     // Custom Role Identifiers
     // Note: DEFAULT_ADMIN_ROLE is built-in (0x00), no need to redefine
     bytes32 public constant MANAGER_ROLE = keccak256("MANAGER_ROLE");
@@ -186,7 +189,7 @@ contract VaultV3 is AccessControl, Pausable, ReentrancyGuard {
         require(IERC20(token).balanceOf(address(this)) >= amount, "Insufficient vault balance");
 
         // Step 1: Move tokens from vault to strategy contract
-        IERC20(token).transfer(address(strategy), amount);
+        IERC20(token).safeTransfer(address(strategy), amount);
 
         // Step 2: Tell strategy to deposit into Aave
         // Strategy's try/catch handles Aave failures and returns tokens to vault if needed
@@ -293,8 +296,7 @@ contract VaultV3 is AccessControl, Pausable, ReentrancyGuard {
         require(token != address(0), "Invalid token address");
         require(!blacklisted[msg.sender], "Address is blacklisted");
 
-        bool success = IERC20(token).transferFrom(msg.sender, address(this), amount);
-        require(success, "Token transfer failed");
+        IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
 
         tokenBalances[token][msg.sender] += amount;
         emit TokenDeposited(msg.sender, token, amount);
@@ -327,8 +329,7 @@ contract VaultV3 is AccessControl, Pausable, ReentrancyGuard {
         IERC20Permit(token).permit(owner, address(this), amount, deadline, v, r, s);
 
         // Transfer tokens from user to vault (now that we have approval)
-        bool success = IERC20(token).transferFrom(owner, address(this), amount);
-        require(success, "Token transfer failed");
+        IERC20(token).safeTransferFrom(owner, address(this), amount);
 
         // Update balance
         tokenBalances[token][owner] += amount;
@@ -347,8 +348,7 @@ contract VaultV3 is AccessControl, Pausable, ReentrancyGuard {
 
         tokenBalances[token][msg.sender] -= amount;
 
-        bool success = IERC20(token).transfer(msg.sender, amount);
-        require(success, "Token transfer failed");
+        IERC20(token).safeTransfer(msg.sender, amount);
 
         emit TokenWithdrawn(msg.sender, token, amount);
     }
