@@ -2354,12 +2354,12 @@ curl "http://localhost:3000/api/vault-context?principal=500&holdingDays=30"
 ```
 
 ### 8.7 Verification — Day 8
-- [ ] All Arbitrum fork tests pass
-- [ ] Both Base and Arbitrum forks running concurrently
-- [ ] vault-context API returns real APY from both chains
-- [ ] `netAdvantage` calculation is correct (manually verify the math)
-- [ ] Small principal (20 USDC, 30 days): netAdvantage is negative (correct)
-- [ ] Large principal (5000 USDC, 90 days): netAdvantage may be positive
+- [x] All Arbitrum fork tests pass
+- [x] Both Base and Arbitrum forks running concurrently
+- [x] vault-context API returns real APY from both chains
+- [x] `netAdvantage` calculation is correct (manually verify the math)
+- [x] Small principal (20 USDC, 30 days): netAdvantage is negative (correct)
+- [x] Large principal (5000 USDC, 90 days): netAdvantage may be positive
 
 
 ---
