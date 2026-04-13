@@ -2246,13 +2246,13 @@ Document findings in `summary-report/SECURITY_ANALYSIS.md`:
 - Low/Info: document and accept
 
 ### 7.5 Verification — Day 7
-- [ ] All 8 fork tests pass against Base mainnet state
-- [ ] `invest()` successfully supplies USDC to real Base Aave (on fork)
-- [ ] `divest()` successfully withdraws from real Base Aave (on fork)
-- [ ] `getReserveData()` returns real APY (non-zero, reasonable range)
-- [ ] Strategy failure isolation confirmed (bad pool address → vault funds safe)
-- [ ] Slither run completed, critical findings addressed
-- [ ] `summary-report/SECURITY_ANALYSIS.md` created
+- [x] All 8 fork tests pass against Base mainnet state
+- [x] `invest()` successfully supplies USDC to real Base Aave (on fork)
+- [x] `divest()` successfully withdraws from real Base Aave (on fork)
+- [x] `getReserveData()` returns real APY (non-zero, reasonable range)
+- [x] Strategy failure isolation confirmed (bad pool address → vault funds safe)
+- [x] Slither run completed, critical findings addressed
+- [x] `summary-report/SECURITY_ANALYSIS.md` created
 
 
 ---
