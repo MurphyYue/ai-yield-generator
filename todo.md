@@ -2425,12 +2425,12 @@ cast send $VAULT_BASE "withdrawToken(address,uint256)" $USDC_BASE 5000000 \
 Verify each step on BaseScan.
 
 ### 9.4 Verification — Day 9
-- [ ] VaultV3 + AaveStrategy deployed and verified on BaseScan
-- [ ] Deposit 5 USDC → vault balance shows 5 USDC
-- [ ] Invest → USDC moves to Aave (verify on BaseScan)
-- [ ] Divest → USDC returns to vault
-- [ ] Withdraw → USDC back in wallet
-- [ ] Full cycle completed with real money, no loss
+- [x] VaultV3 + AaveStrategy deployed and verified on BaseScan
+- [x] Deposit 5 USDC → vault balance shows 5 USDC
+- [x] Invest → USDC moves to Aave (verify on BaseScan)
+- [x] Divest → USDC returns to vault
+- [x] Withdraw → USDC back in wallet
+- [x] Full cycle completed with real money, no loss
 
 
 **Milestone: You now have verified contracts on BaseScan**
