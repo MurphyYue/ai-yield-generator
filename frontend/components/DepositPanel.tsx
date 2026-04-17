@@ -1,10 +1,9 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { useVault, SimulationError } from '@/hooks/useVault'
+import { useVault } from '@/hooks/useVault'
 import { usePermitSignature } from '@/hooks/usePermitSignature'
 import { TokenSelector, TokenType } from './TokenSelector'
-import { VAULT_ADDRESS, MOCK_USDT_ADDRESS } from '@/lib/vault'
 import { parseUnits } from 'viem'
 
 interface Intent {
@@ -32,6 +31,9 @@ export function DepositPanel({ intent }: DepositPanelProps) {
   const { signPermit } = usePermitSignature()
 
   const {
+    vaultAddress,
+    stableTokenAddress,
+    stableTokenSymbol,
     deposit,
     depositUsdt,
     depositUsdtWithPermit,
@@ -71,6 +73,7 @@ export function DepositPanel({ intent }: DepositPanelProps) {
   }, [amount, selectedToken])
 
   const handleDeposit = useCallback(async () => {
+    console.log('selectedToken', selectedToken)
     if (!amount || parseFloat(amount) <= 0) return
     setError(null)
 
@@ -98,19 +101,18 @@ export function DepositPanel({ intent }: DepositPanelProps) {
 
           // Generate permit signature (off-chain, no gas)
           const signature = await signPermit(
-            MOCK_USDT_ADDRESS,
-            VAULT_ADDRESS,
+            stableTokenAddress,
+            vaultAddress,
             parseUnits(amount, 6)
           )
 
           setIsSimulating(false)
-
           if (signature) {
             // One-step deposit with permit
             depositUsdtWithPermit(amount, signature)
             return
           }
-        } catch (permitError: any) {
+        } catch (permitError: unknown) {
           console.log('Permit failed, falling back to two-step flow:', permitError)
           setIsSimulating(false)
           setUsePermit(false) // Disable permit for this transaction
@@ -143,7 +145,6 @@ export function DepositPanel({ intent }: DepositPanelProps) {
           setError(simError.message)
           return
         }
-
         // Simulation passed, deposit
         depositUsdt(amount)
       }
@@ -152,6 +153,8 @@ export function DepositPanel({ intent }: DepositPanelProps) {
     amount,
     selectedToken,
     usePermit,
+    stableTokenAddress,
+    vaultAddress,
     simulateDeposit,
     simulateDepositUsdt,
     simulateApproveUsdt,
@@ -222,7 +225,7 @@ export function DepositPanel({ intent }: DepositPanelProps) {
       {selectedToken === 'USDT' && (
         <div className="alert-cyan" style={{ fontSize: '0.7rem' }}>
           <span style={{ fontWeight: 600 }}>✦ One-Click Deposit</span> — gasless permit signature, single transaction.
-          Allowance: <span style={{ fontFamily: "'JetBrains Mono', monospace" }}>{usdtAllowanceFormatted} USDT</span>
+          Allowance: <span style={{ fontFamily: "'JetBrains Mono', monospace" }}>{usdtAllowanceFormatted} {stableTokenSymbol}</span>
         </div>
       )}
 
@@ -231,8 +234,8 @@ export function DepositPanel({ intent }: DepositPanelProps) {
 
       {/* Balances */}
       <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', color: 'var(--text-2)' }}>
-        <span>Available: <span style={{ fontFamily: "'JetBrains Mono', monospace", color: 'var(--text-1)' }}>{getAvailableBalance()} {selectedToken}</span></span>
-        <span>In vault: <span style={{ fontFamily: "'JetBrains Mono', monospace", color: 'var(--cyan)' }}>{getVaultBalance()} {selectedToken}</span></span>
+        <span>Available: <span style={{ fontFamily: "'JetBrains Mono', monospace", color: 'var(--text-1)' }}>{getAvailableBalance()} {selectedToken === 'USDT' ? stableTokenSymbol : selectedToken}</span></span>
+        <span>In vault: <span style={{ fontFamily: "'JetBrains Mono', monospace", color: 'var(--cyan)' }}>{getVaultBalance()} {selectedToken === 'USDT' ? stableTokenSymbol : selectedToken}</span></span>
       </div>
 
       {/* Amount input */}
@@ -241,7 +244,7 @@ export function DepositPanel({ intent }: DepositPanelProps) {
         type="number"
         value={amount}
         onChange={e => setAmount(e.target.value)}
-        placeholder={`Amount (${selectedToken})`}
+        placeholder={`Amount (${selectedToken === 'USDT' ? stableTokenSymbol : selectedToken})`}
         step="0.000001"
         min="0"
         max={getMaxAmount()}
@@ -254,12 +257,12 @@ export function DepositPanel({ intent }: DepositPanelProps) {
         onClick={handleDeposit}
         disabled={isLoading || isSimulating || !amount || parseFloat(amount) <= 0}
       >
-        {isSimulating ? 'Checking…' : isLoading ? (isApproving ? 'Approving…' : 'Depositing…') : selectedToken === 'USDT' ? `One-Click Deposit ${amount || '0'} USDT` : `Deposit ${amount || '0'} ETH`}
+        {isSimulating ? 'Checking…' : isLoading ? (isApproving ? 'Approving…' : 'Depositing…') : selectedToken === 'USDT' ? `One-Click Deposit ${amount || '0'} ${stableTokenSymbol}` : `Deposit ${amount || '0'} ETH`}
       </button>
 
       {isSuccess && (
         <div className="alert-green" style={{ fontSize: '0.75rem' }}>
-          {isDepositWithPermitSuccess ? '✦ One-click deposit complete.' : isApproveSuccess ? `Approved. You can now deposit ${amount} ${selectedToken}.` : 'Deposit complete.'}
+          {isDepositWithPermitSuccess ? '✦ One-click deposit complete.' : isApproveSuccess ? `Approved. You can now deposit ${amount} ${selectedToken === 'USDT' ? stableTokenSymbol : selectedToken}.` : 'Deposit complete.'}
         </div>
       )}
     </div>

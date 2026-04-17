@@ -80,7 +80,7 @@ export function usePermitSignature(): UsePermitSignatureResult {
         // Build EIP-712 domain separator
         const domain = {
           name: tokenName as string,
-          version: '1',
+          version: '2',
           chainId: chainId,
           verifyingContract: tokenAddress,
         } as const

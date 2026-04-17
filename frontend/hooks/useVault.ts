@@ -1,44 +1,71 @@
 'use client'
 
-import { useAccount, useReadContract, useWriteContract, useWaitForTransactionReceipt, useBalance, usePublicClient, useConfig } from 'wagmi'
+import {
+  useAccount,
+  useBalance,
+  useConfig,
+  useReadContract,
+  useWaitForTransactionReceipt,
+  useWriteContract,
+} from 'wagmi'
 import { simulateContract } from '@wagmi/core'
-import { VAULT_ABI, VAULT_ADDRESS, ERC20_PERMIT_ABI, MOCK_USDT_ADDRESS } from '@/lib/vault'
-import { parseEther, formatEther, parseUnits, formatUnits } from 'viem'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { formatEther, formatUnits, parseEther, parseUnits } from 'viem'
+import {
+  ERC20_PERMIT_ABI,
+  VAULT_ABI,
+  getDefaultChainIdFromEnv,
+  getStableTokenAddressForChain,
+  getStableTokenSymbolForChain,
+  getVaultAddressForChain,
+} from '@/lib/vault'
+import { getChainKey } from '@/lib/chains'
 
-// Simulation error types
 export interface SimulationError {
   type: 'insufficient_balance' | 'insufficient_allowance' | 'paused' | 'access_denied' | 'revert' | 'unknown'
   message: string
   shortMessage: string
 }
 
-export function useVault() {
-  const { address } = useAccount()
-  const publicClient = usePublicClient()
-  const config = useConfig()
+type ErrorLike = {
+  message?: string
+  shortMessage?: string
+  data?: {
+    message?: string
+  }
+}
 
-  // Simulation error state
+export function useVault() {
+  const { address, chainId } = useAccount()
+  const config = useConfig()
   const [simulationError, setSimulationError] = useState<SimulationError | null>(null)
 
-  // Helper function to parse simulation errors
-  const parseSimulationError = (error: any): SimulationError => {
-    const message = error?.message || 'Unknown error'
-    const shortMessage = error?.shortMessage || error?.data?.message || message
+  const activeChainId = chainId ?? getDefaultChainIdFromEnv()
+  const activeChainKey = getChainKey(activeChainId)
+  const vaultAddress = useMemo(() => getVaultAddressForChain(activeChainKey), [activeChainKey])
+  const stableTokenAddress = useMemo(
+    () => getStableTokenAddressForChain(activeChainKey),
+    [activeChainKey]
+  )
+  const stableTokenSymbol = useMemo(
+    () => getStableTokenSymbolForChain(activeChainKey),
+    [activeChainKey]
+  )
 
-    // Determine error type
+  const parseSimulationError = (error: unknown): SimulationError => {
+    const err = error as ErrorLike
+    const message = err.message || 'Unknown error'
+    const shortMessage = err.shortMessage || err.data?.message || message
     const lowerMessage = shortMessage.toLowerCase()
 
-    // Check for EnforcedPause (Pausable)
     if (lowerMessage.includes('enforcedpause') || lowerMessage.includes('paused')) {
       return {
         type: 'paused',
         message: 'System is paused. Contact admin to resume operations.',
-        shortMessage
+        shortMessage,
       }
     }
 
-    // Check for AccessControl errors
     if (
       lowerMessage.includes('accesscontrol') ||
       lowerMessage.includes('access denied') ||
@@ -48,7 +75,7 @@ export function useVault() {
       return {
         type: 'access_denied',
         message: 'Insufficient permissions for this operation.',
-        shortMessage
+        shortMessage,
       }
     }
 
@@ -56,291 +83,263 @@ export function useVault() {
       return {
         type: 'insufficient_balance',
         message: 'Insufficient balance for this transaction',
-        shortMessage
+        shortMessage,
       }
     }
+
     if (lowerMessage.includes('insufficient allowance')) {
       return {
         type: 'insufficient_allowance',
         message: 'Insufficient allowance. Please approve the token first.',
-        shortMessage
+        shortMessage,
       }
     }
+
     if (lowerMessage.includes('revert') || lowerMessage.includes('failed')) {
       return {
         type: 'revert',
         message: 'Transaction would fail. Please check your inputs.',
-        shortMessage
+        shortMessage,
       }
     }
+
     return {
       type: 'unknown',
       message: 'Transaction could not be simulated',
-      shortMessage
+      shortMessage,
     }
   }
 
-  // Simulate ETH deposit
-  const simulateDeposit = useCallback(async (amount: string) => {
-    if (!address || !config) return null
-    try {
-      await simulateContract(config, {
-        address: VAULT_ADDRESS,
-        abi: VAULT_ABI,
-        functionName: 'deposit',
-        value: parseEther(amount),
-        account: address,
-      })
-      return null
-    } catch (error: any) {
-      return parseSimulationError(error)
-    }
-  }, [address, config])
+  const simulateDeposit = useCallback(
+    async (amount: string) => {
+      if (!address || !config) return null
+      try {
+        await simulateContract(config, {
+          address: vaultAddress,
+          abi: VAULT_ABI,
+          functionName: 'deposit',
+          value: parseEther(amount),
+          account: address,
+        })
+        return null
+      } catch (error: unknown) {
+        return parseSimulationError(error)
+      }
+    },
+    [address, config, vaultAddress]
+  )
 
-  // Simulate ETH withdraw
-  const simulateWithdraw = useCallback(async (amount: string) => {
-    if (!address || !config) return null
-    try {
-      await simulateContract(config, {
-        address: VAULT_ADDRESS,
-        abi: VAULT_ABI,
-        functionName: 'withdraw',
-        args: [parseEther(amount)],
-        account: address,
-      })
-      return null
-    } catch (error: any) {
-      return parseSimulationError(error)
-    }
-  }, [address, config])
+  const simulateWithdraw = useCallback(
+    async (amount: string) => {
+      if (!address || !config) return null
+      try {
+        await simulateContract(config, {
+          address: vaultAddress,
+          abi: VAULT_ABI,
+          functionName: 'withdraw',
+          args: [parseEther(amount)],
+          account: address,
+        })
+        return null
+      } catch (error: unknown) {
+        return parseSimulationError(error)
+      }
+    },
+    [address, config, vaultAddress]
+  )
 
-  // Simulate USDT deposit
-  const simulateDepositUsdt = useCallback(async (amount: string) => {
-    if (!address || !config) return null
-    try {
-      await simulateContract(config, {
-        address: VAULT_ADDRESS,
-        abi: VAULT_ABI,
-        functionName: 'depositToken',
-        args: [MOCK_USDT_ADDRESS, parseUnits(amount, 6)],
-        account: address,
-      })
-      return null
-    } catch (error: any) {
-      return parseSimulationError(error)
-    }
-  }, [address, config])
+  const simulateDepositUsdt = useCallback(
+    async (amount: string) => {
+      if (!address || !config) return null
+      try {
+        await simulateContract(config, {
+          address: vaultAddress,
+          abi: VAULT_ABI,
+          functionName: 'depositToken',
+          args: [stableTokenAddress, parseUnits(amount, 6)],
+          account: address,
+        })
+        return null
+      } catch (error: unknown) {
+        return parseSimulationError(error)
+      }
+    },
+    [address, config, stableTokenAddress, vaultAddress]
+  )
 
-  // Simulate USDT withdraw
-  const simulateWithdrawUsdt = useCallback(async (amount: string) => {
-    if (!address || !config) return null
-    try {
-      await simulateContract(config, {
-        address: VAULT_ADDRESS,
-        abi: VAULT_ABI,
-        functionName: 'withdrawToken',
-        args: [MOCK_USDT_ADDRESS, parseUnits(amount, 6)],
-        account: address,
-      })
-      return null
-    } catch (error: any) {
-      return parseSimulationError(error)
-    }
-  }, [address, config])
+  const simulateWithdrawUsdt = useCallback(
+    async (amount: string) => {
+      if (!address || !config) return null
+      try {
+        await simulateContract(config, {
+          address: vaultAddress,
+          abi: VAULT_ABI,
+          functionName: 'withdrawToken',
+          args: [stableTokenAddress, parseUnits(amount, 6)],
+          account: address,
+        })
+        return null
+      } catch (error: unknown) {
+        return parseSimulationError(error)
+      }
+    },
+    [address, config, stableTokenAddress, vaultAddress]
+  )
 
-  // Simulate USDT approve
-  const simulateApproveUsdt = useCallback(async (amount: string) => {
-    if (!address || !config) return null
-    try {
-      await simulateContract(config, {
-        address: MOCK_USDT_ADDRESS,
-        abi: ERC20_PERMIT_ABI,
-        functionName: 'approve',
-        args: [VAULT_ADDRESS, parseUnits(amount, 6)],
-        account: address,
-      })
-      return null
-    } catch (error: any) {
-      return parseSimulationError(error)
-    }
-  }, [address, config])
+  const simulateApproveUsdt = useCallback(
+    async (amount: string) => {
+      if (!address || !config) return null
+      try {
+        await simulateContract(config, {
+          address: stableTokenAddress,
+          abi: ERC20_PERMIT_ABI,
+          functionName: 'approve',
+          args: [vaultAddress, parseUnits(amount, 6)],
+          account: address,
+        })
+        return null
+      } catch (error: unknown) {
+        return parseSimulationError(error)
+      }
+    },
+    [address, config, stableTokenAddress, vaultAddress]
+  )
 
-  // Read ETH balance
   const { data: ethBalance, refetch: refetchEthBalance } = useBalance({
     address,
-    query: {
-      enabled: !!address,
-    },
+    query: { enabled: !!address },
   })
 
-  // Read paused state
   const { data: isPaused, refetch: refetchPaused } = useReadContract({
-    address: VAULT_ADDRESS,
+    address: vaultAddress,
     abi: VAULT_ABI,
     functionName: 'paused',
-    query: {
-      enabled: true,
-    },
+    query: { enabled: true },
   })
 
-  // Read vault ETH balance
   const { data: vaultBalance, refetch: refetchVaultBalance } = useReadContract({
-    address: VAULT_ADDRESS,
+    address: vaultAddress,
     abi: VAULT_ABI,
     functionName: 'balances',
     args: address ? [address] : undefined,
-    query: {
-      enabled: !!address,
-    },
+    query: { enabled: !!address },
   })
 
-  // Read USDT balance
   const { data: usdtBalance, refetch: refetchUsdtBalance } = useReadContract({
-    address: MOCK_USDT_ADDRESS,
+    address: stableTokenAddress,
     abi: ERC20_PERMIT_ABI,
     functionName: 'balanceOf',
     args: address ? [address] : undefined,
-    query: {
-      enabled: !!address,
-    },
+    query: { enabled: !!address },
   })
 
-
-  // Read vault USDT balance
   const { data: vaultUsdtBalance, refetch: refetchVaultUsdtBalance } = useReadContract({
-    address: VAULT_ADDRESS,
+    address: vaultAddress,
     abi: VAULT_ABI,
     functionName: 'getTokenBalance',
-    args: address ? [MOCK_USDT_ADDRESS, address] : undefined,
-    query: {
-      enabled: !!address,
-    },
+    args: address ? [stableTokenAddress, address] : undefined,
+    query: { enabled: !!address },
   })
 
-  // Read USDT allowance
   const { data: usdtAllowance, refetch: refetchUsdtAllowance } = useReadContract({
-    address: MOCK_USDT_ADDRESS,
+    address: stableTokenAddress,
     abi: ERC20_PERMIT_ABI,
     functionName: 'allowance',
-    args: address ? [address, VAULT_ADDRESS] : undefined,
-    query: {
-      enabled: !!address,
-    },
+    args: address ? [address, vaultAddress] : undefined,
+    query: { enabled: !!address },
   })
 
-  // Write contract - ETH Deposit
   const { writeContract: writeDeposit, data: depositHash } = useWriteContract()
   const { isLoading: isDepositing, isSuccess: isDepositSuccess } =
-    useWaitForTransactionReceipt({
-      hash: depositHash,
-    })
+    useWaitForTransactionReceipt({ hash: depositHash })
 
-  // Write contract - ETH Withdraw
   const { writeContract: writeWithdraw, data: withdrawHash } = useWriteContract()
   const { isLoading: isWithdrawing, isSuccess: isWithdrawSuccess } =
-    useWaitForTransactionReceipt({
-      hash: withdrawHash,
-    })
+    useWaitForTransactionReceipt({ hash: withdrawHash })
 
-  // Write contract - Approve USDT
   const { writeContract: writeApprove, data: approveHash } = useWriteContract()
   const { isLoading: isApproving, isSuccess: isApproveSuccess } =
-    useWaitForTransactionReceipt({
-      hash: approveHash,
-    })
+    useWaitForTransactionReceipt({ hash: approveHash })
 
-  // Write contract - USDT Deposit
   const { writeContract: writeDepositToken, data: depositTokenHash } = useWriteContract()
   const { isLoading: isDepositingToken, isSuccess: isDepositTokenSuccess } =
-    useWaitForTransactionReceipt({
-      hash: depositTokenHash,
-    })
+    useWaitForTransactionReceipt({ hash: depositTokenHash })
 
-  // Write contract - USDT Withdraw
   const { writeContract: writeWithdrawToken, data: withdrawTokenHash } = useWriteContract()
   const { isLoading: isWithdrawingToken, isSuccess: isWithdrawTokenSuccess } =
-    useWaitForTransactionReceipt({
-      hash: withdrawTokenHash,
-    })
+    useWaitForTransactionReceipt({ hash: withdrawTokenHash })
 
-
-  // ETH Deposit function
   const deposit = useCallback(
     (amount: string) => {
       if (!amount || parseFloat(amount) <= 0) return
       writeDeposit({
-        address: VAULT_ADDRESS,
+        address: vaultAddress,
         abi: VAULT_ABI,
         functionName: 'deposit',
         value: parseEther(amount),
       })
     },
-    [writeDeposit]
+    [vaultAddress, writeDeposit]
   )
 
-  // ETH Withdraw function
   const withdraw = useCallback(
     (amount: string) => {
       if (!amount || parseFloat(amount) <= 0) return
       writeWithdraw({
-        address: VAULT_ADDRESS,
+        address: vaultAddress,
         abi: VAULT_ABI,
         functionName: 'withdraw',
         args: [parseEther(amount)],
       })
     },
-    [writeWithdraw]
+    [vaultAddress, writeWithdraw]
   )
 
-  // Approve USDT function
   const approveUsdt = useCallback(
     (amount: string) => {
       if (!amount || parseFloat(amount) <= 0) return
       writeApprove({
-        address: MOCK_USDT_ADDRESS,
+        address: stableTokenAddress,
         abi: ERC20_PERMIT_ABI,
         functionName: 'approve',
-        args: [VAULT_ADDRESS, parseUnits(amount, 6)], // USDT has 6 decimals
+        args: [vaultAddress, parseUnits(amount, 6)],
       })
     },
-    [writeApprove]
+    [stableTokenAddress, vaultAddress, writeApprove]
   )
 
-  // USDT Deposit function
   const depositUsdt = useCallback(
     (amount: string) => {
       if (!amount || parseFloat(amount) <= 0) return
       writeDepositToken({
-        address: VAULT_ADDRESS,
+        address: vaultAddress,
         abi: VAULT_ABI,
         functionName: 'depositToken',
-        args: [MOCK_USDT_ADDRESS, parseUnits(amount, 6)],
+        args: [stableTokenAddress, parseUnits(amount, 6)],
       })
     },
-    [writeDepositToken]
+    [stableTokenAddress, vaultAddress, writeDepositToken]
   )
 
-  // Write contract - USDT Deposit with Permit
-  const { writeContract: writeDepositWithPermit, data: depositWithPermitHash } = useWriteContract()
+  const { writeContract: writeDepositWithPermit, data: depositWithPermitHash } =
+    useWriteContract()
   const { isLoading: isDepositingWithPermit, isSuccess: isDepositWithPermitSuccess } =
-    useWaitForTransactionReceipt({
-      hash: depositWithPermitHash,
-    })
+    useWaitForTransactionReceipt({ hash: depositWithPermitHash })
 
-  // USDT Deposit with Permit function (one-step approval+deposit)
   const depositUsdtWithPermit = useCallback(
-    (amount: string, signature: { v: number; r: `0x${string}`; s: `0x${string}`; deadline: bigint }) => {
-      if (!amount || parseFloat(amount) <= 0) return
-      if (!address) return
-
+    (
+      amount: string,
+      signature: { v: number; r: `0x${string}`; s: `0x${string}`; deadline: bigint }
+    ) => {
+      if (!amount || parseFloat(amount) <= 0 || !address) return
       writeDepositWithPermit({
-        address: VAULT_ADDRESS,
+        address: vaultAddress,
         abi: VAULT_ABI,
         functionName: 'depositWithPermit',
         args: [
-          MOCK_USDT_ADDRESS,
+          stableTokenAddress,
           parseUnits(amount, 6),
-          address, // owner
+          address,
           signature.deadline,
           signature.v,
           signature.r,
@@ -348,108 +347,93 @@ export function useVault() {
         ],
       })
     },
-    [writeDepositWithPermit, address]
+    [address, stableTokenAddress, vaultAddress, writeDepositWithPermit]
   )
 
-  // USDT Withdraw function
   const withdrawUsdt = useCallback(
     (amount: string) => {
       if (!amount || parseFloat(amount) <= 0) return
       writeWithdrawToken({
-        address: VAULT_ADDRESS,
+        address: vaultAddress,
         abi: VAULT_ABI,
         functionName: 'withdrawToken',
-        args: [MOCK_USDT_ADDRESS, parseUnits(amount, 6)],
+        args: [stableTokenAddress, parseUnits(amount, 6)],
       })
     },
-    [writeWithdrawToken]
+    [stableTokenAddress, vaultAddress, writeWithdrawToken]
   )
 
-  // Pause function (Manager only)
   const { writeContract: writePause, data: pauseHash } = useWriteContract()
-  const { isLoading: isPausing, isSuccess: isPauseSuccess } = useWaitForTransactionReceipt({
-    hash: pauseHash,
-  })
+  const { isLoading: isPausing, isSuccess: isPauseSuccess } =
+    useWaitForTransactionReceipt({ hash: pauseHash })
 
   const pause = useCallback(() => {
     writePause({
-      address: VAULT_ADDRESS,
+      address: vaultAddress,
       abi: VAULT_ABI,
       functionName: 'pause',
     })
-  }, [writePause])
+  }, [vaultAddress, writePause])
 
-  // Unpause function (Manager only)
   const { writeContract: writeUnpause, data: unpauseHash } = useWriteContract()
-  const { isLoading: isUnpausing, isSuccess: isUnpauseSuccess } = useWaitForTransactionReceipt({
-    hash: unpauseHash,
-  })
-
-  
+  const { isLoading: isUnpausing, isSuccess: isUnpauseSuccess } =
+    useWaitForTransactionReceipt({ hash: unpauseHash })
 
   const unpause = useCallback(() => {
     writeUnpause({
-      address: VAULT_ADDRESS,
+      address: vaultAddress,
       abi: VAULT_ABI,
       functionName: 'unpause',
     })
-  }, [writeUnpause])
+  }, [vaultAddress, writeUnpause])
 
-  // ============ Day 4: Strategy Functions ============
-
-  // Only what's deployed in Aave (strategy.totalAssets())
   const { data: strategyBalance, refetch: refetchStrategyBalance } = useReadContract({
-    address: VAULT_ADDRESS,
+    address: vaultAddress,
     abi: VAULT_ABI,
     functionName: 'getStrategyBalance',
     query: { enabled: !!address },
   })
 
-  // Vault's idle ERC20 holdings — decreases when invest() is called
   const { data: vaultTokenHoldings, refetch: refetchVaultTokenHoldings } = useReadContract({
-    address: VAULT_ADDRESS,
+    address: vaultAddress,
     abi: VAULT_ABI,
     functionName: 'getVaultTokenHoldings',
-    args: [MOCK_USDT_ADDRESS],
+    args: [stableTokenAddress],
     query: { enabled: !!address },
   })
 
-  // Invest (Treasurer only)
   const { writeContract: writeInvest, data: investHash } = useWriteContract()
-  const { isLoading: isInvesting, isSuccess: isInvestSuccess } = useWaitForTransactionReceipt({
-    hash: investHash,
-  })
+  const { isLoading: isInvesting, isSuccess: isInvestSuccess } =
+    useWaitForTransactionReceipt({ hash: investHash })
 
   const invest = useCallback(
     (amount: string) => {
       writeInvest({
-        address: VAULT_ADDRESS,
+        address: vaultAddress,
         abi: VAULT_ABI,
         functionName: 'invest',
-        args: [MOCK_USDT_ADDRESS, parseUnits(amount, 6)],
+        args: [stableTokenAddress, parseUnits(amount, 6)],
       })
     },
-    [writeInvest]
+    [stableTokenAddress, vaultAddress, writeInvest]
   )
 
-  // Divest (Treasurer only)
   const { writeContract: writeDivest, data: divestHash } = useWriteContract()
-  const { isLoading: isDivesting, isSuccess: isDivestSuccess } = useWaitForTransactionReceipt({
-    hash: divestHash,
-  })
+  const { isLoading: isDivesting, isSuccess: isDivestSuccess } =
+    useWaitForTransactionReceipt({ hash: divestHash })
 
   const divest = useCallback(
     (amount: string) => {
       writeDivest({
-        address: VAULT_ADDRESS,
+        address: vaultAddress,
         abi: VAULT_ABI,
         functionName: 'divest',
         args: [parseUnits(amount, 6)],
       })
     },
-    [writeDivest]
+    [vaultAddress, writeDivest]
   )
-  // Auto-refetch all balances after successful transactions
+
   useEffect(() => {
     if (isDepositSuccess || isWithdrawSuccess) {
       setTimeout(() => {
@@ -457,96 +441,94 @@ export function useVault() {
         refetchVaultBalance()
       }, 1000)
     }
-    if (isDepositTokenSuccess || isWithdrawTokenSuccess || isApproveSuccess || isDepositWithPermitSuccess) {
+
+    if (
+      isDepositTokenSuccess ||
+      isWithdrawTokenSuccess ||
+      isApproveSuccess ||
+      isDepositWithPermitSuccess
+    ) {
       setTimeout(() => {
         refetchUsdtBalance()
         refetchVaultUsdtBalance()
         refetchUsdtAllowance()
-        refetchVaultTokenHoldings()  // vault's idle ERC20 balance changes on every deposit/withdraw
+        refetchVaultTokenHoldings()
+        refetchPaused()
       }, 1000)
     }
   }, [
-    isDepositSuccess,
-    isWithdrawSuccess,
-    isDepositTokenSuccess,
-    isWithdrawTokenSuccess,
     isApproveSuccess,
+    isDepositSuccess,
+    isDepositTokenSuccess,
     isDepositWithPermitSuccess,
+    isWithdrawSuccess,
+    isWithdrawTokenSuccess,
     refetchEthBalance,
-    refetchVaultBalance,
-    refetchUsdtBalance,
-    refetchVaultUsdtBalance,
+    refetchPaused,
     refetchUsdtAllowance,
+    refetchUsdtBalance,
+    refetchVaultBalance,
     refetchVaultTokenHoldings,
+    refetchVaultUsdtBalance,
   ])
-  // Refetch strategy balances after invest/divest confirms
+
   useEffect(() => {
     if (isInvestSuccess || isDivestSuccess) {
       setTimeout(() => {
         refetchStrategyBalance()
         refetchVaultTokenHoldings()
+        refetchVaultUsdtBalance()
       }, 1000)
     }
-  }, [isInvestSuccess, isDivestSuccess, refetchStrategyBalance, refetchVaultTokenHoldings])
+  }, [
+    isDivestSuccess,
+    isInvestSuccess,
+    refetchStrategyBalance,
+    refetchVaultTokenHoldings,
+    refetchVaultUsdtBalance,
+  ])
 
   return {
-    // ETH Balances
+    activeChainId,
+    activeChainKey,
+    stableTokenAddress,
+    stableTokenSymbol,
+    vaultAddress,
     ethBalance: ethBalance?.value ?? BigInt(0),
     ethBalanceFormatted: ethBalance?.formatted ?? '0',
     ethSymbol: ethBalance?.symbol ?? 'ETH',
-
     vaultBalance: vaultBalance ?? BigInt(0),
     vaultBalanceFormatted: vaultBalance ? formatEther(vaultBalance) : '0',
-
-    // USDT Balances
     usdtBalance: usdtBalance ?? BigInt(0),
     usdtBalanceFormatted: usdtBalance ? formatUnits(usdtBalance, 6) : '0',
-
     vaultUsdtBalance: vaultUsdtBalance ?? BigInt(0),
     vaultUsdtBalanceFormatted: vaultUsdtBalance ? formatUnits(vaultUsdtBalance, 6) : '0',
-
     usdtAllowance: usdtAllowance ?? BigInt(0),
     usdtAllowanceFormatted: usdtAllowance ? formatUnits(usdtAllowance, 6) : '0',
-
-    // ETH Actions
     deposit,
     withdraw,
-
-    // USDT Actions
     approveUsdt,
     depositUsdt,
     depositUsdtWithPermit,
     withdrawUsdt,
-
-    // ETH Loading states
     isDepositing,
     isWithdrawing,
-
-    // USDT Loading states
     isApproving,
     isDepositingToken,
     isDepositingWithPermit,
     isWithdrawingToken,
-
-    // ETH Transaction success
     isDepositSuccess,
     isWithdrawSuccess,
-
-    // USDT Transaction success
     isApproveSuccess,
     isDepositTokenSuccess,
     isDepositWithPermitSuccess,
     isWithdrawTokenSuccess,
-
-    // Transaction hashes
     depositHash,
     withdrawHash,
     approveHash,
     depositTokenHash,
     depositWithPermitHash,
     withdrawTokenHash,
-
-    // Simulation functions
     simulateDeposit,
     simulateWithdraw,
     simulateDepositUsdt,
@@ -554,8 +536,6 @@ export function useVault() {
     simulateApproveUsdt,
     simulationError,
     setSimulationError,
-
-    // Day 3: Admin functions
     pause,
     unpause,
     isPaused: isPaused ?? false,
@@ -565,8 +545,6 @@ export function useVault() {
     isUnpauseSuccess,
     pauseHash,
     unpauseHash,
-
-    // Day 4: Strategy functions
     invest,
     divest,
     isInvesting,
@@ -575,10 +553,8 @@ export function useVault() {
     isDivestSuccess,
     investHash,
     divestHash,
-    // strategyBalance: only what's deployed in Aave (strategy.totalAssets())
     strategyBalance: strategyBalance ?? BigInt(0),
     strategyBalanceFormatted: strategyBalance ? formatUnits(strategyBalance, 6) : '0',
-    // vaultTokenHoldings: vault's idle ERC20 balance (decreases on invest, increases on divest/deposit)
     vaultTokenHoldings: vaultTokenHoldings ?? BigInt(0),
     vaultTokenHoldingsFormatted: vaultTokenHoldings ? formatUnits(vaultTokenHoldings, 6) : '0',
   }

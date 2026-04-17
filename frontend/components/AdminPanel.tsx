@@ -12,6 +12,7 @@ interface AdminPanelProps {
 export function AdminPanel({ intent }: AdminPanelProps) {
   const { address } = useAccount()
   const {
+    stableTokenSymbol,
     isPaused,
     pause, unpause,
     isPausing, isUnpausing,
@@ -136,7 +137,7 @@ export function AdminPanel({ intent }: AdminPanelProps) {
             <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.9rem', fontWeight: 500, color: 'var(--green)' }}>
               {parseFloat(vaultTokenHoldingsFormatted).toFixed(2)}
             </div>
-            <div style={{ fontSize: '0.6rem', color: 'var(--text-3)', marginTop: 1 }}>USDT</div>
+            <div style={{ fontSize: '0.6rem', color: 'var(--text-3)', marginTop: 1 }}>{stableTokenSymbol}</div>
           </div>
           <div style={{
             background: 'var(--surface-3)', border: '1px solid var(--border)',
@@ -146,7 +147,7 @@ export function AdminPanel({ intent }: AdminPanelProps) {
             <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.9rem', fontWeight: 500, color: 'var(--purple)' }}>
               {parseFloat(strategyBalanceFormatted).toFixed(2)}
             </div>
-            <div style={{ fontSize: '0.6rem', color: 'var(--text-3)', marginTop: 1 }}>USDT</div>
+            <div style={{ fontSize: '0.6rem', color: 'var(--text-3)', marginTop: 1 }}>{stableTokenSymbol}</div>
           </div>
         </div>
 
@@ -158,7 +159,7 @@ export function AdminPanel({ intent }: AdminPanelProps) {
               className="vault-input"
               style={{ flex: 1 }}
               type="number"
-              placeholder="USDT amount"
+              placeholder={`${stableTokenSymbol} amount`}
               value={investAmount}
               onChange={e => setInvestAmount(e.target.value)}
             />
@@ -180,7 +181,7 @@ export function AdminPanel({ intent }: AdminPanelProps) {
               className="vault-input"
               style={{ flex: 1 }}
               type="number"
-              placeholder="USDT amount"
+              placeholder={`${stableTokenSymbol} amount`}
               value={divestAmount}
               onChange={e => setDivestAmount(e.target.value)}
             />
@@ -196,7 +197,7 @@ export function AdminPanel({ intent }: AdminPanelProps) {
 
         {(isInvestSuccess || isDivestSuccess) && (
           <div className="alert-green">
-            {isInvestSuccess ? 'USDT invested into Aave.' : 'USDT divested from Aave.'}
+            {isInvestSuccess ? `${stableTokenSymbol} invested into Aave.` : `${stableTokenSymbol} divested from Aave.`}
           </div>
         )}
 

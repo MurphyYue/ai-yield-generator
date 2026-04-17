@@ -11,11 +11,11 @@ interface TokenSelectorProps {
 }
 
 export function TokenSelector({ selectedToken, onTokenChange, disabled = false }: TokenSelectorProps) {
-  const { ethBalanceFormatted, usdtBalanceFormatted, vaultBalanceFormatted, vaultUsdtBalanceFormatted } = useVault()
+  const { ethBalanceFormatted, usdtBalanceFormatted, vaultBalanceFormatted, vaultUsdtBalanceFormatted, stableTokenSymbol } = useVault()
 
   const tokens: { id: TokenType; wallet: string; vault: string }[] = [
     { id: 'ETH',  wallet: `${parseFloat(ethBalanceFormatted).toFixed(4)} ETH`,   vault: `${parseFloat(vaultBalanceFormatted).toFixed(4)} ETH` },
-    { id: 'USDT', wallet: `${parseFloat(usdtBalanceFormatted).toFixed(2)} USDT`, vault: `${parseFloat(vaultUsdtBalanceFormatted).toFixed(2)} USDT` },
+    { id: 'USDT', wallet: `${parseFloat(usdtBalanceFormatted).toFixed(2)} ${stableTokenSymbol}`, vault: `${parseFloat(vaultUsdtBalanceFormatted).toFixed(2)} ${stableTokenSymbol}` },
   ]
 
   return (
@@ -40,7 +40,7 @@ export function TokenSelector({ selectedToken, onTokenChange, disabled = false }
           >
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
               <span style={{ fontWeight: 700, fontSize: '0.85rem', color: active ? 'var(--cyan)' : 'var(--text-1)' }}>
-                {t.id}
+                {t.id === 'USDT' ? stableTokenSymbol : t.id}
               </span>
               {active && (
                 <span style={{

@@ -11,9 +11,11 @@ import { AdminPanel } from './AdminPanel'
 import { SystemPausedBanner } from './SystemPausedBanner'
 import { ThemeToggle } from './ThemeToggle'
 import { AIIntent, isLegacyIntent } from '@/lib/ai-intent'
+import { useVault } from '@/hooks/useVault'
 
 export function VaultDashboard() {
   const { isConnected } = useAccount()
+  const { activeChainKey } = useVault()
   const [intent, setIntent] = useState<AIIntent | null>(null)
 
   const handleIntentParsed = (parsedIntent: AIIntent) => {
@@ -76,7 +78,7 @@ export function VaultDashboard() {
             border: '1px solid var(--cyan-glow)',
             padding: '2px 8px', borderRadius: 4,
           }}>
-            TESTNET
+            {activeChainKey.toUpperCase()}
           </span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>

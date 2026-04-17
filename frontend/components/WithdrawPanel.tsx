@@ -26,6 +26,7 @@ export function WithdrawPanel({ intent }: WithdrawPanelProps) {
   const [error, setError] = useState<string | null>(null)
 
   const {
+    stableTokenSymbol,
     withdraw,
     withdrawUsdt,
     simulateWithdraw,
@@ -153,7 +154,7 @@ export function WithdrawPanel({ intent }: WithdrawPanelProps) {
 
       {/* Balances + Max */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.7rem', color: 'var(--text-2)' }}>
-        <span>In vault: <span style={{ fontFamily: "'JetBrains Mono', monospace", color: 'var(--purple)' }}>{getVaultBalance()} {selectedToken}</span></span>
+        <span>In vault: <span style={{ fontFamily: "'JetBrains Mono', monospace", color: 'var(--purple)' }}>{getVaultBalance()} {selectedToken === 'USDT' ? stableTokenSymbol : selectedToken}</span></span>
         <button
           onClick={handleSetMax}
           disabled={isLoading}
@@ -174,7 +175,7 @@ export function WithdrawPanel({ intent }: WithdrawPanelProps) {
         type="number"
         value={amount}
         onChange={e => setAmount(e.target.value)}
-        placeholder={`Amount (${selectedToken})`}
+        placeholder={`Amount (${selectedToken === 'USDT' ? stableTokenSymbol : selectedToken})`}
         step="0.000001"
         min="0"
         max={getMaxAmount()}
@@ -192,7 +193,7 @@ export function WithdrawPanel({ intent }: WithdrawPanelProps) {
         onClick={handleWithdraw}
         disabled={isLoading || isSimulating || !amount || parseFloat(amount) <= 0 || parseFloat(amount) > parseFloat(getMaxAmount())}
       >
-        {isSimulating ? 'Checking…' : isLoading ? 'Withdrawing…' : `Withdraw ${amount || '0'} ${selectedToken}`}
+        {isSimulating ? 'Checking…' : isLoading ? 'Withdrawing…' : `Withdraw ${amount || '0'} ${selectedToken === 'USDT' ? stableTokenSymbol : selectedToken}`}
       </button>
 
       {isSuccess && (

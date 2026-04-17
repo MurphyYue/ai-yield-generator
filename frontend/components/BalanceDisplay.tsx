@@ -73,6 +73,7 @@ export function BalanceDisplay() {
     vaultBalanceFormatted,
     usdtBalanceFormatted,
     vaultUsdtBalanceFormatted,
+    stableTokenSymbol,
   } = useVault()
 
   return (
@@ -88,12 +89,12 @@ export function BalanceDisplay() {
         tag="VAULT"
       />
       <StatPill
-        label="Wallet USDT"
-        value={`${fmt(usdtBalanceFormatted, 2)} USDT`}
+        label={`Wallet ${stableTokenSymbol}`}
+        value={`${fmt(usdtBalanceFormatted, 2)} ${stableTokenSymbol}`}
       />
       <StatPill
-        label="Vault USDT"
-        value={`${fmt(vaultUsdtBalanceFormatted, 2)} USDT`}
+        label={`Vault ${stableTokenSymbol}`}
+        value={`${fmt(vaultUsdtBalanceFormatted, 2)} ${stableTokenSymbol}`}
         accent="green"
         tag="VAULT"
       />
