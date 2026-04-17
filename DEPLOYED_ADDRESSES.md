@@ -1,5 +1,25 @@
 # Deployed Contract Addresses
 
+## Base Mainnet (chainId: 8453)
+
+| Contract | Address |
+|---|---|
+| Deployer | `0x4423D93f6DbF82aAbeaa50A72F4Be9ABe4464F08` |
+| USDC | `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913` |
+| VaultV3 | `0xF0E2c34BF85d4C6cCDA7e872669836bFDBa2ef66` |
+| AaveStrategy | `0x4d287Aaf11dEb2142246327eEbE3AFF558EF6a22` |
+| Aave V3 Pool (Base) | `0xA238Dd80C259a72e81d7e4664a9801593F98d1c5` |
+
+## Arbitrum Mainnet (chainId: 42161)
+
+| Contract | Address |
+|---|---|
+| Deployer | `0x4423D93f6DbF82aAbeaa50A72F4Be9ABe4464F08` |
+| USDC | `0xaf88d065e77c8cC2239327C5EDb3A432268e5831` |
+| VaultV3 | `0xF0E2c34BF85d4C6cCDA7e872669836bFDBa2ef66` |
+| AaveStrategy | `0x4d287Aaf11dEb2142246327eEbE3AFF558EF6a22` |
+| Aave V3 Pool (Arbitrum) | `0x794a61358D6845594F94dc1DB02A252b5b4814aD` |
+
 ## Sepolia Testnet (chainId: 11155111)
 
 | Contract | Address |

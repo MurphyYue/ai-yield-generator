@@ -2492,11 +2492,11 @@ NEXT_PUBLIC_ARBITRUM_VAULT_ADDRESS=<arb vault address>
 - Divest + withdraw
 
 ### 10.6 Verification — Day 10
-- [ ] Contracts deployed + verified on Arbitrum (Arbiscan)
-- [ ] Smoke test passed on Arbitrum with real USDC
-- [ ] Frontend connects to Base, shows real USDC balances
-- [ ] Deposit → invest → divest cycle works via frontend on Base
-- [ ] DEPLOYED_ADDRESSES.md updated with both chains
+- [x] Contracts deployed + verified on Arbitrum (Arbiscan)
+- [x] Smoke test passed on Arbitrum with real USDC
+- [x] Frontend connects to Base, shows real USDC balances
+- [x] Deposit → invest → divest cycle works via frontend on Base
+- [x] DEPLOYED_ADDRESSES.md updated with both chains
 
 
 ---
