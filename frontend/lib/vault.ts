@@ -119,6 +119,21 @@ export function getStableTokenSymbolForChain(chainKey: SupportedChainKey): 'USDC
   return chainKey === 'base' || chainKey === 'arbitrum' ? 'USDC' : 'USDT'
 }
 
+export function getPermitVersionForToken(tokenAddress: `0x${string}`): string {
+  const normalized = tokenAddress.toLowerCase()
+
+  // Circle USDC on Base and Arbitrum follows the FiatTokenV2 family and expects EIP-712 version "2".
+  if (
+    normalized === USDC_BASE.toLowerCase() ||
+    normalized === USDC_ARBITRUM.toLowerCase()
+  ) {
+    return '2'
+  }
+
+  // Default to "1" for mock/test tokens and older permit-enabled ERC20s unless explicitly overridden.
+  return '1'
+}
+
 export function getDefaultChainIdFromEnv(): number {
   switch (process.env.NEXT_PUBLIC_CHAIN) {
     case 'base':

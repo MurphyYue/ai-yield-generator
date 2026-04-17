@@ -2,7 +2,7 @@
 
 import { useCallback, useState } from 'react'
 import { useWalletClient, usePublicClient } from 'wagmi'
-import { ERC20_PERMIT_ABI } from '@/lib/vault'
+import { ERC20_PERMIT_ABI, getPermitVersionForToken } from '@/lib/vault'
 
 // EIP-2612 Permit types
 export interface PermitSignature {
@@ -77,10 +77,13 @@ export function usePermitSignature(): UsePermitSignatureResult {
           publicClient.getChainId(),
         ])
 
-        // Build EIP-712 domain separator
+        const permitVersion = getPermitVersionForToken(tokenAddress)
+
+        // Build EIP-712 domain separator.
+        // Circle USDC on Base/Arbitrum uses FiatTokenV2 permit domains with version "2".
         const domain = {
           name: tokenName as string,
-          version: '2',
+          version: permitVersion,
           chainId: chainId,
           verifyingContract: tokenAddress,
         } as const
