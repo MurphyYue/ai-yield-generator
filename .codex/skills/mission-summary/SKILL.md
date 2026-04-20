@@ -1,36 +1,34 @@
 ---
-name: mission-fullstack
-description: Execute day-by-day tutor missions for a real Web3 product while training the user toward a Senior Web3 Full-stack Engineer role with strong DeFi competence. Use when the user provides a Day/Mission task, asks to implement a roadmap item, wants a structured post-task learning summary, or needs frontend-to-Web3 translation tied to this product's real business evolution.
+name: mission-summary
+description: Produce structured completion summaries for day-by-day Web3 product missions while training the user toward a Senior Web3 Full-stack Engineer role with strong DeFi competence. Use when a mission/day is complete and the user asks to summarize what was done, what problems occurred, how they were solved, what was learned, and what comes next.
 ---
 
-# Mission Fullstack
+# Mission Summary
 
-Treat every tutor mission as product work, not tutorial work. Maintain continuity with the existing repository, preserve engineering quality, and translate implementation into reusable learning for a Senior Web3 Full-stack Engineer path.
+Use this skill after a mission/day has been completed. Produce a clear completion record that explains the product value, technical changes, problems encountered, solutions, and reusable learning for a Senior Web3 Full-stack Engineer path.
 
 ## Workflow
 
-### 1. Frame the mission before coding
+### 1. Confirm completion context
 
 Extract and state:
 - the mission goal in plain language
 - the business/product value
 - the architecture layer being changed: contract, frontend, API, indexing, deployment, governance, AI
-- the user-facing behavior that should change
+- the user-facing behavior that changed
 - the trust boundaries and dependencies
-- the main risks, failure modes, and likely regressions
+- the main risks, failure modes, and remaining weak points
 
-Use the checklist in `references/architecture-checklist.md` when the task affects contracts, permissions, funds, external protocols, signing, or deployment.
+Use `references/summary-template.md` as the default output structure.
 
-### 2. Implement with product-grade standards
+### 2. Summarize with product-grade judgment
 
-Prefer implementations that move the repo toward a real business product:
-- favor explicit security boundaries over convenience
-- favor failure isolation over optimistic coupling
-- favor observable, testable flows over hidden behavior
-- favor end-to-end delivery across frontend, backend, contracts, and deployment boundaries
-- preserve prior mission intent unless the current mission requires a change
-
-When tutor instructions are under-specified, make the smallest reasonable production-grade decision and state the assumption.
+Describe the work as real product progress, not tutorial activity:
+- what changed
+- why it matters
+- how the runtime flow works now
+- what was verified
+- what remains incomplete, risky, or deferred
 
 ### 3. Explain in a frontend-to-fullstack bridge
 
@@ -44,9 +42,9 @@ Translate Web3/FinTech concepts into terms familiar to a frontend engineer growi
 
 Use concise analogies. Avoid hand-wavy simplifications.
 
-### 4. End every substantial mission with a structured summary
+### 4. Produce the structured summary
 
-After implementation or detailed analysis, produce a mission summary using `references/summary-template.md`.
+For completed missions, produce a mission summary using `references/summary-template.md`.
 
 Always cover:
 - why the task exists
@@ -65,11 +63,19 @@ Use `references/senior-fullstack-rubric.md` to pressure-test the work through en
 
 ## Output rules
 
-For tutor missions, default to this sequence:
-1. Mission framing
-2. Implementation or analysis
-3. Risks and assumptions
-4. Mission summary
+For completion summaries, default to this sequence:
+1. Mission goal
+2. Business meaning
+3. Architecture meaning
+4. What changed
+5. How it works
+6. Problems met and how they were solved
+7. Verification results
+8. Security / risk notes
+9. What the user should learn
+10. Senior engineer lens
+11. Open questions
+12. Next mission context
 
 For small tasks, keep the summary compact, but do not skip the learning layer if the task teaches a reusable concept.
 
@@ -87,9 +93,13 @@ The skill should not over-rotate into "architect" language when the more useful 
 - how the user would implement, debug, and explain it
 - how the work demonstrates professional Web3 engineering maturity
 
+## Boundary With Mission Analysis
+
+Use `mission-analysis` before implementation to analyze readiness, gaps, risks, and work order. Use this skill after implementation to summarize completed work.
+
 ## References
 
 - `references/summary-template.md`: fixed summary structure to use after missions
-- `references/architecture-checklist.md`: architecture review prompts before or during implementation
+- `references/architecture-checklist.md`: architecture review prompts when explaining risk and constraints
 - `references/business-lens.md`: explain why the task matters to a real product
 - `references/senior-fullstack-rubric.md`: distinguish coding completion from senior full-stack engineering maturity

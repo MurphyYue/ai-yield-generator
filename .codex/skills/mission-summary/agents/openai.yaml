@@ -1,0 +1,4 @@
+interface:
+  display_name: "Mission Summary"
+  short_description: "Structured completion summaries for daily Web3 missions"
+  default_prompt: "Use $mission-summary to summarize the completed mission, including what changed, problems solved, verification, risks, learning points, and next mission context."
