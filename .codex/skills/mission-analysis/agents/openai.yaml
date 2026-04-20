@@ -1,0 +1,4 @@
+interface:
+  display_name: "Mission Analysis"
+  short_description: "Pre-implementation analysis for daily project missions"
+  default_prompt: "Use $mission-analysis to analyze this daily mission using todo.md, architecture decisions, and current repo state before implementation."
