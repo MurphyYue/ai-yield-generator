@@ -1,270 +1,472 @@
 # Aave Strategy Context
 
-  ## Purpose
+## Purpose
 
-  This document is the policy and reasoning context for the AI strategy advisor.
+This document is the retrieval-oriented knowledge base policy for the Day 11 AI strategy advisor.
 
-  The AI must not invent market data.
-  The AI must combine:
-  - live on-chain values from the `vault-context` API
-  - this strategy policy document
-  - the user's current question and conversation context
+Use it together with:
 
-  The AI is an advisor, not an executor.
-  It may recommend or warn, but it must never imply that funds move automatically.
+- live data from the `vault-context` API
+- the user's latest question
+- conversation context
 
-  ---
+This document is not the source of live market truth.
 
-  ## 1. Protocol Identity
+The source of truth for APY, costs, net advantage, and migration eligibility is the backend `vault-context` API.
 
-  ### Aave V3
+---
 
-  - Aave V3 is a decentralized, non-custodial liquidity protocol.
-  - Users can supply supported assets to earn yield.
-  - In this project, Aave is used as a yield destination for vault-managed idle capital.
-  - The vault contract remains the source of truth for vault balances.
-  - Aave is only the external strategy layer.
+## Quick Summary
 
-  ### Security Positioning
+Use these rules as the highest-priority guidance.
 
-  - Aave is a major DeFi protocol with a long operating history.
-  - It has undergone multiple audits and production use.
-  - However, it is still an external protocol and therefore a dependency risk.
-  - The AI must not describe Aave as risk-free.
+- Base is the default home chain.
+- Arbitrum is only an optimization destination.
+- Mainnet advisory uses USDC.
+- The AI explains backend-computed facts. The AI does not invent facts.
+- The AI must not imply that funds move automatically.
+- Return `cross_chain_migrate` only when backend migration gating passes.
+- If migration is marginal, negative, unknown, or blocked, recommend staying on Base.
 
-  ---
+---
 
-  ## 2. Token Context: USDT
+## Decision Priority
 
-  - USDT is a fiat-referenced stablecoin.
-  - In normal conditions, `1 USDT` is expected to track approximately `1 USD`.
-  - Relative to volatile crypto assets, USDT has lower price volatility.
-  - However, USDT still carries issuer, smart contract, liquidity, and depeg risk.
+When multiple signals exist, follow this order:
 
-  ### Approval / Allowance Rule
+1. `crossChain.shouldSuggestMigration`
+2. `crossChain.recommendation`
+3. `crossChain.netAdvantageUsd`
+4. `crossChain.reasonCodes`
+5. user request phrasing
+6. natural-language explanation style
 
-  - If the user wants to invest USDT and current allowance is insufficient, the AI must explain that approval is required
-  before execution.
-  - Do not say approval is always required.
-  - Correct rule:
-    - If allowance is insufficient: approval step first
-    - If allowance is sufficient: proceed directly to execution confirmation
+If the backend recommendation conflicts with a user request, follow the backend recommendation and explain why.
 
-  ---
+---
 
-  ## 3. Core Decision Logic
+## Product Chain Model
 
-  The AI must reason in this order.
+### Base Is The Home Chain
 
-  ### Step 1: Net Yield Calculation
+- Base is the default home chain for the product.
+- The normal user path starts on Base and stays on Base.
+- Base is the default recommendation when migration economics are weak, marginal, negative, stale, or unknown.
 
-  Use live values from the `vault-context` API.
+### Arbitrum Is An Optimization Destination
 
-  Formula:
+- Arbitrum is not a co-equal default chain.
+- Arbitrum is considered only when expected net yield advantage is large enough to justify bridge cost and bridge risk.
+- The AI may recommend Arbitrum only when deterministic backend data says migration is justified.
 
-  `APY_net = ((Principal × SupplyAPY) - GasCostUSD) / Principal`
+### Product-Owned Cross-Chain Flow
 
-  Where:
-  - `Principal` = idle USDT proposed for investment
-  - `SupplyAPY` = current Aave supply APY
-  - `GasCostUSD` = estimated execution friction converted to USD
+The full intended product flow is:
 
-  ### Hard Rule
+`AI advice -> bridge -> destination chain switch -> destination vault deposit -> destination invest`
 
-  - If `APY_net <= 0`, do not recommend investing.
-  - The AI must clearly warn that transaction friction makes the action economically unattractive.
+The AI must not describe the bridge as the final step.
 
-  Suggested wording:
-  - "Current gas friction outweighs expected yield, so investing now is not recommended."
-  - "This action is likely to lose value after transaction cost."
+Bridging only moves funds cross-chain. The destination-side deposit and invest steps are still required.
 
-  ---
+---
 
-  ## 4. Risk Profile Mapping
+## Token Context
 
-  Apply these thresholds when generating advice.
+### Mainnet Token Standard
 
-  ### Conservative
+Days 6-14 mainnet work uses USDC.
 
-  - Recommend investment only if `netApy >= 2.5%`
-  - Gas friction should be less than `2%` of expected first-month yield
-  - Tone: cautious, capital-preserving, low-friction
+- Base USDC: `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913`
+- Arbitrum USDC: `0xaf88d065e77c8cC2239327C5EDb3A432268e5831`
 
-  ### Balanced
+USDC is a fiat-referenced stablecoin issued by Circle. It is expected to track about `1 USD` in normal conditions, but it is not risk-free.
 
-  - Recommend investment only if `netApy >= 1.5%`
-  - Gas friction should be less than `8%` of expected first-month yield
-  - Tone: balanced, medium-term, pragmatic
+### USDC Risks
 
-  ### Aggressive
+- issuer risk
+- smart contract risk
+- depeg risk
+- chain-specific liquidity risk
+- bridge and routing risk during cross-chain movement
 
-  - Recommend investment only if `netApy >= 0.5%`
-  - Gas friction should be less than `15%` of expected first-month yield
-  - Tone: efficiency-first, opportunistic, but still rational
+The AI must never describe USDC as risk-free.
 
-  ### If Risk Profile Is Unknown
+### Legacy USDT Note
 
-  - Default to `Balanced`
-  - Do not default to `Aggressive`
+Older Sepolia and Anvil training flows may still refer to USDT.
 
-  ---
+For current Base and Arbitrum mainnet advisory, use USDC language.
 
-  ## 5. Gas Friction Policy
+---
 
-  ### High Friction Warning
+## Backend Source Of Truth
 
-  If a single transaction's gas cost is greater than `20%` of expected first-month yield, the AI must show a strong warning.
+Use the live `vault-context` API response as the source of truth for strategy reasoning.
 
-  Suggested wording:
-  - "Current gas cost is too high relative to expected short-term yield."
-  - "Consider increasing the investment size or waiting for lower network cost."
+Important fields:
 
-  ### Friction Interpretation
+- `base.supplyApy`
+- `base.estimatedTxCostUsd`
+- `arbitrum.supplyApy`
+- `arbitrum.estimatedTxCostUsd`
+- `crossChain.principal`
+- `crossChain.holdingDays`
+- `crossChain.deltaApy`
+- `crossChain.grossYieldAdvantageUsd`
+- `crossChain.estimatedBridgeFeeUsd`
+- `crossChain.estimatedReturnBridgeFeeUsd`
+- `crossChain.destinationGasCostUsd`
+- `crossChain.slippageEstimateUsd`
+- `crossChain.totalEstimatedCostUsd`
+- `crossChain.netAdvantageUsd`
+- `crossChain.breakevenDays`
+- `crossChain.shouldSuggestMigration`
+- `crossChain.recommendation`
+- `crossChain.reasonCodes`
+- `crossChain.summaryReason`
+- `vault.idleUsdc`
+- `vault.strategyUsdc`
+- `vault.userUsdc`
 
-  The AI should understand:
-  - small principal + normal gas can make a positive APY economically weak
-  - larger principal can justify the same gas cost more easily
-  - the recommendation should consider both yield and transaction efficiency
+The backend computes the economics.
 
-  ---
+The AI explains the economics.
 
-  ## 6. Interaction Workflow
+---
 
-  The AI should guide the user through these stages.
+## Field Glossary
 
-  ### Stage 1: Consultation
+### `crossChain.principal`
 
-  When the user asks:
-  - "Should I invest?"
-  - "Check my yield"
-  - "Is now a good time?"
+The notional amount of USDC being evaluated for migration.
 
-  The AI should:
-  - analyze current APY
-  - analyze gas friction
-  - evaluate idle USDT
-  - apply risk-profile logic
-  - return `action: "suggest"`
+### `crossChain.holdingDays`
 
-  ### Stage 2: Confirmation
+The expected holding period used for the migration estimate.
 
-  When the user says:
-  - "Yes, invest"
-  - "Do it"
-  - "Confirm"
-  - "Invest 500 USDT"
+### `crossChain.deltaApy`
 
-  The AI should:
-  - restate the action clearly
-  - include amount, protocol, and current net APY
-  - note whether approval is required if relevant
-  - return `action: "intent_confirmed"`
+The APY difference:
 
-  ### Stage 3: Execution Handoff
+`Arbitrum APY - Base APY`
 
-  The AI should not execute transactions itself.
-  It should hand off to the frontend transaction flow.
+### `crossChain.grossYieldAdvantageUsd`
 
-  ---
+The estimated extra yield on Arbitrum before costs.
 
-  ## 7. Recommendation Rules
+### `crossChain.totalEstimatedCostUsd`
 
-  ### Recommend Investing When
+The estimated total cost of migration, including bridge cost, return bridge cost, destination gas, and slippage.
 
-  - idle USDT is greater than `0`
-  - live market data is available
-  - `netApy > 0`
-  - gas friction is acceptable for the user's risk profile
-  - the amount is large enough to make execution economically reasonable
+### `crossChain.netAdvantageUsd`
 
-  ### Do Not Recommend Investing When
+The estimated economic advantage after subtracting migration-related costs.
 
-  - `netApy <= 0`
-  - idle USDT is `0`
-  - market data is unavailable or stale
-  - gas friction is too high relative to expected near-term yield
-  - the user asks for execution but the advice context has materially changed
+### `crossChain.breakevenDays`
 
-  ---
+The estimated number of days needed for extra yield to recover migration cost.
 
-  ## 8. Exception Handling
+### `crossChain.shouldSuggestMigration`
 
-  ### Market Deviation
+The backend's hard gate.
 
-  If frontend pre-check finds `netApy` deviation greater than `10%` from the AI suggestion context:
-  - stop the transaction flow
-  - explain that market conditions changed
-  - re-evaluate the recommendation
-  - do not keep the old recommendation as valid
+If this is `false`, the AI must not return `cross_chain_migrate`.
 
-  ### Data Unavailability
+### `crossChain.recommendation`
 
-  If Aave or market data cannot be fetched:
-  - do not produce confident investment advice
-  - explain that recommendation quality is degraded
-  - prefer caution over action
+The backend's recommendation summary.
 
-  ### Testnet Context
+Expected values:
 
-  On Sepolia:
-  - ETH does not carry real economic value
-  - however, the advisor should use the provided virtual ETH price assumption to simulate realistic cost awareness
-  - this is for training decision quality, not real PnL
+- `migrate`
+- `stay`
 
-  ---
+---
 
-  ## 9. Response Behavior Rules
+## Single-Chain Aave Strategy Rules
 
-  The AI response should be:
-  - clear
-  - concise
-  - economically rational
-  - explicit about tradeoffs
+For single-chain investment advice, the AI should evaluate:
 
-  The AI must not:
-  - guarantee profit
-  - describe Aave as risk-free
-  - ignore gas cost
-  - imply automatic execution
-  - recommend investing when net economics are negative
+- idle USDC
+- current chain Aave USDC supply APY
+- estimated gas cost
+- user holding period if provided
+- whether the user is asking for advice or confirming execution
 
-  ---
+The AI should not recommend investing if:
 
-  ## 10. Terminology
+- idle USDC is `0`
+- market data is unavailable
+- gas friction dominates expected yield
+- the action conflicts with the user's current vault state
 
-  ### Supply APY
-  The annualized yield earned by supplying assets to Aave.
+Example single-chain response:
 
-  ### Gas Fee
-  Blockchain transaction cost paid to execute a transaction. This is a sunk cost.
+```json
+{
+  "action": "suggest",
+  "strategy_logic": "Investing idle USDC into Aave may improve yield on the current chain.",
+  "action_data": {
+    "type": "invest",
+    "amount": 100,
+    "token": "USDC",
+    "protocol": "aave",
+    "net_apy": 2.5,
+    "risk_level": "low"
+  },
+  "confidence": "high"
+}
+```
 
-  ### Allowance
-  ERC-20 approval amount that permits a contract to transfer tokens on the user's behalf.
+---
 
-  ### Idle USDT
-  USDT sitting in the vault but not yet deployed into the strategy.
+## Cross-Chain Net Advantage Formula
 
-  ### Strategy Balance
-  USDT already deployed into the active Aave strategy.
+Use this formula:
 
-  ### Health Factor
-  A risk metric more relevant to borrowing positions. It is reserved for future expansion and is not currently central to this
-  supply-only strategy flow.
+```text
+Net_Advantage =
+Gross_Yield_Advantage
+- Estimated_Bridge_Fee
+- Estimated_Return_Bridge_Fee
+- Destination_Gas_Cost
+- Slippage_Estimate
+```
 
-  ---
+Where:
 
-  ## 11. Advisor Output Intent
+- `Gross_Yield_Advantage = Principal x (Delta_APY / 100) x (Holding_Days / 365)`
+- `Delta_APY = Arbitrum_APY - Base_APY`
+- `Total_Estimated_Cost = Bridge_Fee + Return_Bridge_Fee + Destination_Gas_Cost + Slippage`
 
-  The AI should structure its reasoning so it can support outputs like:
+The AI must never recommend migration from raw APY difference alone.
 
-  - `action: "suggest"` for advisory responses
-  - `action: "intent_confirmed"` for confirmed user execution intent
-  - `action: "unknown"` when the request is unclear
+---
 
-  For strategy advice, the AI should aim to provide:
-  - a human-readable explanation
-  - the recommended action type
-  - the proposed amount
-  - the protocol name
-  - the current net APY
-  - the risk level
+## Breakeven Rule
+
+Breakeven is the estimated number of days needed for extra yield to pay back migration cost.
+
+Formula:
+
+```text
+Breakeven_Days =
+Total_Estimated_Cost / (Principal x Delta_APY / 100 / 365)
+```
+
+If `Delta_APY <= 0`, breakeven is not meaningful and should be treated as `null`.
+
+If breakeven is longer than the user's intended holding period, the AI should generally recommend staying on Base unless the backend explicitly says migration is justified.
+
+---
+
+## Strict Migration Gating
+
+### Migration May Be Suggested Only When
+
+All of these are true:
+
+- `crossChain.shouldSuggestMigration = true`
+- `crossChain.recommendation = "migrate"`
+- `crossChain.netAdvantageUsd > 1`
+- principal is at least `100 USDC`
+- `crossChain.deltaApy > 0`
+
+Only in this case may the AI return:
+
+```json
+"type": "cross_chain_migrate"
+```
+
+### Stay On Base When
+
+If any of these are true, recommend staying on Base:
+
+- `crossChain.shouldSuggestMigration = false`
+- `crossChain.recommendation = "stay"`
+- `crossChain.netAdvantageUsd <= 1`
+- principal is below `100 USDC`
+- `crossChain.deltaApy <= 0`
+- breakeven is longer than the intended holding period
+- market data is missing, stale, or unavailable
+
+In these cases, the AI must not return `cross_chain_migrate`.
+
+It should still explain the reason naturally.
+
+### Small Principal Rule
+
+If principal is below `100 USDC`, migration is almost never justified.
+
+Suggested explanation:
+
+> For this amount, bridge fees, gas, slippage, and bridge risk are too large relative to the expected extra yield. Staying on Base is the safer choice.
+
+---
+
+## Decision Table
+
+Use this table for retrieval and explanation.
+
+| Condition | Recommendation | Allowed action type |
+| --- | --- | --- |
+| `principal <= 0` | Stay on Base | `check_yield` |
+| `principal < 100` | Stay on Base | `check_yield` |
+| `deltaApy <= 0` | Stay on Base | `check_yield` |
+| `netAdvantageUsd <= 1` | Stay on Base | `check_yield` |
+| `shouldSuggestMigration = false` | Stay on Base | `check_yield` |
+| `shouldSuggestMigration = true` and `recommendation = "migrate"` | Migration allowed | `cross_chain_migrate` |
+
+---
+
+## Reason Code Interpretation
+
+If the backend returns reason codes, interpret them like this:
+
+- `MIGRATION_PROFITABLE`: migration passed backend threshold
+- `NO_PRINCIPAL`: no usable principal was provided
+- `SMALL_PRINCIPAL`: amount is below minimum migration size
+- `NO_APY_ADVANTAGE`: Arbitrum does not currently beat Base
+- `NET_ADVANTAGE_NEGATIVE`: migration loses value after costs
+- `NET_ADVANTAGE_BELOW_THRESHOLD`: migration is positive but too small to justify bridge risk
+- `BRIDGE_RISK_NOT_JUSTIFIED`: bridge risk is not justified by expected return
+
+The AI should use these codes to explain the recommendation naturally, not just repeat the code names.
+
+---
+
+## Bridge Risk Warning
+
+When discussing cross-chain migration, the AI must mention bridge-specific risks:
+
+- smart contract exploit risk
+- route or provider risk
+- bridge delay risk
+- stuck or delayed funds
+- destination-side deposit and invest are still required
+
+Suggested warning:
+
+> This involves bridge risk. Funds may be delayed, bridge contracts can fail, and you still need to deposit and invest on Arbitrum after the bridge completes.
+
+If migration is blocked because the expected gain is too small, bridge risk should be part of the explanation.
+
+---
+
+## Output Rules
+
+### Allowed Top-Level Actions
+
+- `suggest`
+- `intent_confirmed`
+- `unknown`
+
+### Allowed Action Types
+
+- `invest`
+- `divest`
+- `check_yield`
+- `deposit`
+- `withdraw`
+- `cross_chain_migrate`
+- `none`
+
+### When Migration Is Justified
+
+Example:
+
+```json
+{
+  "action": "suggest",
+  "strategy_logic": "Arbitrum Aave USDC yields more than Base. For 5000 USDC held 90 days, estimated net advantage is $12.40 after bridge, gas, and slippage costs. Breakeven is 18 days. Bridge risk still applies.",
+  "action_data": {
+    "type": "cross_chain_migrate",
+    "amount": 5000,
+    "token": "USDC",
+    "protocol": "aave",
+    "source_chain": "base",
+    "target_chain": "arbitrum",
+    "net_apy": 4.2,
+    "delta_apy": 2.1,
+    "net_advantage_usd": 12.4,
+    "breakeven_days": 18,
+    "risk_level": "medium"
+  },
+  "confidence": "high"
+}
+```
+
+### When Migration Is Not Justified
+
+Example:
+
+```json
+{
+  "action": "suggest",
+  "strategy_logic": "Stay on Base. The estimated net advantage is negative after bridge, gas, and slippage costs, so migration is not justified.",
+  "action_data": {
+    "type": "check_yield",
+    "amount": 20,
+    "token": "USDC",
+    "protocol": "aave",
+    "net_apy": 2.6,
+    "risk_level": "low"
+  },
+  "confidence": "high"
+}
+```
+
+---
+
+## Anti-Patterns
+
+The AI must not do any of the following:
+
+- say Arbitrum is better based on APY alone
+- recommend migration when backend says stay
+- return `cross_chain_migrate` for marginal economics
+- imply that bridge execution is automatic
+- stop the explanation at bridge completion
+- describe Aave, USDC, or bridges as risk-free
+- invent APY, costs, breakeven, or balances
+
+---
+
+## Conversation Behavior
+
+When the user asks:
+
+- "Should I invest?"
+- "Should I move to Arbitrum?"
+- "Is Arbitrum better?"
+- "What if I hold for 90 days?"
+- "What about 5000 USDC?"
+
+The AI should:
+
+1. use live `vault-context` data
+2. compare Base and Arbitrum
+3. include cost and bridge risk, not just APY
+4. follow backend migration gating
+5. return structured JSON only
+
+The AI should preserve multi-turn context when the user changes:
+
+- amount
+- holding period
+- risk tolerance
+- source or target chain question
+
+---
+
+## Hard Safety Rules
+
+- Never invent APY.
+- Never invent bridge cost, gas cost, slippage, net advantage, or breakeven.
+- Never recommend migration if backend says `shouldSuggestMigration = false`.
+- Never return `cross_chain_migrate` for negative or marginal net advantage.
+- Never ignore bridge risk.
+- Never imply that the AI can execute transactions.
+- Never describe USDC, Aave, or cross-chain bridges as risk-free.
+- Never stop the migration explanation at bridge completion.

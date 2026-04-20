@@ -13,12 +13,23 @@ const DEFAULT_HOLDING_DAYS = 30
 const ESTIMATED_BRIDGE_FEE_USD = 0.5
 const ESTIMATED_RETURN_BRIDGE_FEE_USD = 0.5
 const SLIPPAGE_RATE = 0.001
+const MIN_MIGRATION_PRINCIPAL_USD = 100
+const MIN_NET_ADVANTAGE_USD = 1
 
 interface VaultSnapshot {
   idleUsdc: number
   strategyUsdc: number
   userUsdc: number
 }
+
+type CrossChainReasonCode =
+  | 'MIGRATION_PROFITABLE'
+  | 'NO_PRINCIPAL'
+  | 'SMALL_PRINCIPAL'
+  | 'NO_APY_ADVANTAGE'
+  | 'NET_ADVANTAGE_NEGATIVE'
+  | 'NET_ADVANTAGE_BELOW_THRESHOLD'
+  | 'BRIDGE_RISK_NOT_JUSTIFIED'
 
 interface ChainMarketSnapshot {
   chainId: number
@@ -44,6 +55,11 @@ interface CrossChainSnapshot {
   slippageEstimateUsd: number
   totalEstimatedCostUsd: number
   netAdvantageUsd: number | null
+  breakevenDays: number | null
+  shouldSuggestMigration: boolean
+  recommendation: 'migrate' | 'stay'
+  reasonCodes: CrossChainReasonCode[]
+  summaryReason: string
 }
 
 interface VaultContextResponse {
@@ -141,6 +157,51 @@ function buildCrossChainSnapshot(
     slippageEstimateUsd
   const netAdvantageUsd =
     principal > 0 ? grossYieldAdvantageUsd - totalEstimatedCostUsd : null
+  const dailyYieldAdvantageUsd =
+    principal > 0 && deltaApy > 0 ? principal * (deltaApy / 100) / 365 : 0
+  const breakevenDays =
+    dailyYieldAdvantageUsd > 0 ? totalEstimatedCostUsd / dailyYieldAdvantageUsd : null
+  const reasonCodes: CrossChainReasonCode[] = []
+
+  if (principal <= 0) {
+    reasonCodes.push('NO_PRINCIPAL')
+  }
+  if (principal > 0 && principal < MIN_MIGRATION_PRINCIPAL_USD) {
+    reasonCodes.push('SMALL_PRINCIPAL')
+  }
+  if (deltaApy <= 0) {
+    reasonCodes.push('NO_APY_ADVANTAGE')
+  }
+  if (netAdvantageUsd !== null && netAdvantageUsd <= 0) {
+    reasonCodes.push('NET_ADVANTAGE_NEGATIVE')
+  }
+  if (
+    netAdvantageUsd !== null &&
+    netAdvantageUsd > 0 &&
+    netAdvantageUsd <= MIN_NET_ADVANTAGE_USD
+  ) {
+    reasonCodes.push('NET_ADVANTAGE_BELOW_THRESHOLD')
+  }
+
+  const shouldSuggestMigration =
+    principal >= MIN_MIGRATION_PRINCIPAL_USD &&
+    deltaApy > 0 &&
+    netAdvantageUsd !== null &&
+    netAdvantageUsd > MIN_NET_ADVANTAGE_USD
+
+  if (shouldSuggestMigration) {
+    reasonCodes.push('MIGRATION_PROFITABLE')
+  } else if (principal > 0) {
+    reasonCodes.push('BRIDGE_RISK_NOT_JUSTIFIED')
+  }
+
+  const recommendation: 'migrate' | 'stay' = shouldSuggestMigration ? 'migrate' : 'stay'
+  const summaryReason = buildSummaryReason({
+    principal,
+    deltaApy,
+    netAdvantageUsd,
+    shouldSuggestMigration,
+  })
 
   return {
     sourceChain: 'base',
@@ -155,7 +216,50 @@ function buildCrossChainSnapshot(
     slippageEstimateUsd,
     totalEstimatedCostUsd,
     netAdvantageUsd,
+    breakevenDays,
+    shouldSuggestMigration,
+    recommendation,
+    reasonCodes,
+    summaryReason,
   }
+}
+
+function buildSummaryReason({
+  principal,
+  deltaApy,
+  netAdvantageUsd,
+  shouldSuggestMigration,
+}: {
+  principal: number
+  deltaApy: number
+  netAdvantageUsd: number | null
+  shouldSuggestMigration: boolean
+}): string {
+  if (principal <= 0) {
+    return 'No principal was provided, so migration cannot be evaluated.'
+  }
+
+  if (principal < MIN_MIGRATION_PRINCIPAL_USD) {
+    return `Principal is below $${MIN_MIGRATION_PRINCIPAL_USD}, so fixed bridge costs and bridge risk usually dominate expected yield.`
+  }
+
+  if (deltaApy <= 0) {
+    return 'Arbitrum does not currently offer a positive APY advantage over Base.'
+  }
+
+  if (netAdvantageUsd === null) {
+    return 'Net advantage could not be calculated from the provided inputs.'
+  }
+
+  if (shouldSuggestMigration) {
+    return `Estimated net advantage is above the $${MIN_NET_ADVANTAGE_USD} migration threshold after bridge, gas, and slippage costs.`
+  }
+
+  if (netAdvantageUsd <= 0) {
+    return 'Estimated net advantage is negative after bridge, gas, and slippage costs.'
+  }
+
+  return `Estimated net advantage is positive but below the $${MIN_NET_ADVANTAGE_USD} threshold, so bridge risk is not justified.`
 }
 
 export async function GET(request: NextRequest) {

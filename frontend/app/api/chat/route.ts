@@ -10,10 +10,14 @@ interface ChatRequest {
   vaultBalances?: {
     ETH: number
     USDT: number
+    USDC?: number
     vaultIdle?: number
     strategyBalance?: number
     userUsdtBalance?: number
+    userUsdcBalance?: number
   }
+  principal?: number
+  holdingDays?: number
 }
 
 interface LegacyIntentResponse {
@@ -30,11 +34,16 @@ interface StrategyIntentResponse {
   action: 'suggest' | 'intent_confirmed' | 'unknown'
   strategy_logic: string
   action_data: {
-    type: 'invest' | 'divest' | 'check_yield' | 'deposit' | 'withdraw' | 'none'
+    type: 'invest' | 'divest' | 'check_yield' | 'deposit' | 'withdraw' | 'cross_chain_migrate' | 'none'
     amount: number
     token: string
     protocol: string
     net_apy: number
+    source_chain?: 'base'
+    target_chain?: 'arbitrum'
+    delta_apy?: number
+    net_advantage_usd?: number
+    breakeven_days?: number | null
     risk_level: 'low' | 'medium' | 'high'
   }
   confidence: 'high' | 'medium' | 'low'
@@ -54,6 +63,21 @@ interface RiskAssessment {
   risk_level: 'high' | 'medium' | 'low'
   risk_reason: string
 }
+
+interface AdvisoryInputs {
+  principal: number
+  holdingDays: number
+}
+
+interface NormalizedVaultBalances {
+  ETH: number
+  USDT: number
+  vaultIdle: number
+  strategyBalance: number
+  userUsdtBalance: number
+}
+
+const DEFAULT_ADVISORY_HOLDING_DAYS = 30
 
 function calculateRisk(
   action: string,
@@ -119,76 +143,147 @@ function cleanJsonString(value: string): string {
     .replace(/```\s*$/i, '')
 }
 
-function normalizeLegacyIntent(rawIntent: any, balances: { ETH: number; USDT: number }): LegacyIntentResponse {
-  const intent = { ...rawIntent }
+type RawIntentPayload = Record<string, unknown>
 
-  if (!['deposit', 'withdraw', 'unknown'].includes(intent.action)) {
-    intent.action = 'unknown'
+function asObject(value: unknown): RawIntentPayload {
+  return value && typeof value === 'object' ? (value as RawIntentPayload) : {}
+}
+
+function asString(value: unknown, fallback = ''): string {
+  return typeof value === 'string' ? value : fallback
+}
+
+function asNumber(value: unknown, fallback = 0): number {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : fallback
+}
+
+function extractAdvisoryInputs(
+  message: string,
+  explicitPrincipal?: number,
+  explicitHoldingDays?: number
+): AdvisoryInputs {
+  const amountMatches = [...message.matchAll(/(?:\$?\s*)(\d+(?:\.\d+)?)\s*(?:usdc|usd|\$)/gi)]
+  const principal =
+    explicitPrincipal !== undefined
+      ? explicitPrincipal
+      : amountMatches.length > 0
+        ? Number(amountMatches[amountMatches.length - 1][1])
+        : 0
+
+  const dayMatch = message.match(/(\d+(?:\.\d+)?)\s*(?:days?|d)\b/i)
+  const monthMatch = message.match(/(\d+(?:\.\d+)?)\s*(?:months?|mo)\b/i)
+  const yearMatch = message.match(/(\d+(?:\.\d+)?)\s*(?:years?|yr)\b/i)
+  const holdingDays =
+    explicitHoldingDays !== undefined
+      ? explicitHoldingDays
+      : dayMatch
+        ? Number(dayMatch[1])
+        : monthMatch
+          ? Number(monthMatch[1]) * 30
+          : yearMatch
+            ? Number(yearMatch[1]) * 365
+            : DEFAULT_ADVISORY_HOLDING_DAYS
+
+  return {
+    principal: Number.isFinite(principal) ? principal : 0,
+    holdingDays: Number.isFinite(holdingDays) ? holdingDays : DEFAULT_ADVISORY_HOLDING_DAYS,
   }
+}
 
-  if (!['ETH', 'USDT', 'unknown'].includes(intent.token)) {
-    intent.token = 'unknown'
-  }
+function normalizeLegacyIntent(rawIntent: unknown, balances: { ETH: number; USDT: number }): LegacyIntentResponse {
+  const raw = asObject(rawIntent)
+  const action = asString(raw.action, 'unknown')
+  const token = asString(raw.token, 'unknown')
+  const confidence = asString(raw.confidence, 'low')
 
-  if (!['high', 'medium', 'low'].includes(intent.confidence)) {
-    intent.confidence = 'low'
-  }
+  const normalizedAction: LegacyIntentResponse['action'] =
+    action === 'deposit' || action === 'withdraw' || action === 'unknown' ? action : 'unknown'
 
-  if (!intent.token_address || !/^0x[a-fA-F0-9]{40}$/.test(intent.token_address)) {
-    intent.token_address = '0x0000000000000000000000000000000000000000'
-  }
+  const normalizedToken: LegacyIntentResponse['token'] =
+    token === 'ETH' || token === 'USDT' || token === 'unknown' ? token : 'unknown'
 
-  const rawAmount = intent.amount
-  intent.amount = convertAmountToNumber(rawAmount, intent.token, balances)
+  const normalizedConfidence: LegacyIntentResponse['confidence'] =
+    confidence === 'high' || confidence === 'medium' || confidence === 'low' ? confidence : 'low'
+
+  const tokenAddress = asString(raw.token_address)
+  const normalizedTokenAddress = /^0x[a-fA-F0-9]{40}$/.test(tokenAddress)
+    ? tokenAddress
+    : '0x0000000000000000000000000000000000000000'
+
+  const amount = convertAmountToNumber(raw.amount as number | string, normalizedToken, balances)
 
   const vaultBalance =
-    intent.token === 'ETH'
+    normalizedToken === 'ETH'
       ? balances.ETH
-      : intent.token === 'USDT'
+      : normalizedToken === 'USDT'
         ? balances.USDT
         : 0
 
-  const riskAssessment = calculateRisk(intent.action, intent.amount, intent.token, vaultBalance)
-  intent.risk_level = riskAssessment.risk_level
-  intent.risk_reason = riskAssessment.risk_reason
+  const riskAssessment = calculateRisk(normalizedAction, amount, normalizedToken, vaultBalance)
 
-  return intent as LegacyIntentResponse
+  return {
+    action: normalizedAction,
+    amount,
+    token: normalizedToken,
+    token_address: normalizedTokenAddress,
+    confidence: normalizedConfidence,
+    risk_level: riskAssessment.risk_level,
+    risk_reason: riskAssessment.risk_reason,
+  }
 }
 
-function normalizeStrategyIntent(rawIntent: any): StrategyIntentResponse {
+function normalizeStrategyIntent(rawIntent: unknown): StrategyIntentResponse {
+  const intent = asObject(rawIntent)
   const confidence =
-    rawIntent.confidence === 'high' || rawIntent.confidence === 'medium' || rawIntent.confidence === 'low'
-      ? rawIntent.confidence
+    intent.confidence === 'high' || intent.confidence === 'medium' || intent.confidence === 'low'
+      ? intent.confidence
       : 'low'
 
   const action =
-    rawIntent.action === 'suggest' || rawIntent.action === 'intent_confirmed' || rawIntent.action === 'unknown'
-      ? rawIntent.action
+    intent.action === 'suggest' || intent.action === 'intent_confirmed' || intent.action === 'unknown'
+      ? intent.action
       : 'unknown'
 
-  const rawActionData = rawIntent.action_data ?? {}
+  const rawActionData = asObject(intent.action_data)
   const riskLevel =
     rawActionData.risk_level === 'high' || rawActionData.risk_level === 'medium' || rawActionData.risk_level === 'low'
       ? rawActionData.risk_level
       : 'low'
+  const rawType = rawActionData.type
+  const normalizedType =
+    rawType === 'invest' ||
+    rawType === 'divest' ||
+    rawType === 'check_yield' ||
+    rawType === 'deposit' ||
+    rawType === 'withdraw' ||
+    rawType === 'cross_chain_migrate' ||
+    rawType === 'none'
+      ? rawType
+      : 'none'
+  const netAdvantageUsd = asNumber(rawActionData.net_advantage_usd)
+  const isValidMigration =
+    normalizedType === 'cross_chain_migrate' &&
+    rawActionData.source_chain === 'base' &&
+    rawActionData.target_chain === 'arbitrum' &&
+    netAdvantageUsd > 1
+  const type = normalizedType === 'cross_chain_migrate' && !isValidMigration ? 'none' : normalizedType
 
   return {
     action,
-    strategy_logic: typeof rawIntent.strategy_logic === 'string' ? rawIntent.strategy_logic : 'No strategy advice returned.',
+    strategy_logic: asString(intent.strategy_logic, 'No strategy advice returned.'),
     action_data: {
-      type:
-        rawActionData.type === 'invest' ||
-        rawActionData.type === 'divest' ||
-        rawActionData.type === 'check_yield' ||
-        rawActionData.type === 'deposit' ||
-        rawActionData.type === 'withdraw' ||
-        rawActionData.type === 'none'
-          ? rawActionData.type
-          : 'none',
-      amount: Number(rawActionData.amount) || 0,
-      token: typeof rawActionData.token === 'string' ? rawActionData.token : 'USDT',
-      protocol: typeof rawActionData.protocol === 'string' ? rawActionData.protocol : 'aave',
-      net_apy: Number(rawActionData.net_apy) || 0,
+      type,
+      amount: asNumber(rawActionData.amount),
+      token: asString(rawActionData.token, 'USDC'),
+      protocol: asString(rawActionData.protocol, 'aave'),
+      net_apy: asNumber(rawActionData.net_apy),
+      source_chain: isValidMigration ? 'base' : undefined,
+      target_chain: isValidMigration ? 'arbitrum' : undefined,
+      delta_apy: asNumber(rawActionData.delta_apy),
+      net_advantage_usd: netAdvantageUsd,
+      breakeven_days:
+        rawActionData.breakeven_days === null ? null : asNumber(rawActionData.breakeven_days),
       risk_level: riskLevel,
     },
     confidence,
@@ -213,11 +308,20 @@ function parseIntentPayload(payload: unknown, balances: { ETH: number; USDT: num
   return normalizeLegacyIntent(parsed, balances)
 }
 
-function buildVaultContextUrl(request: NextRequest, vaultBalances: Required<NonNullable<ChatRequest['vaultBalances']>>) {
+function buildVaultContextUrl(
+  request: NextRequest,
+  vaultBalances: NormalizedVaultBalances,
+  advisoryInputs: AdvisoryInputs
+) {
   const url = new URL('/api/vault-context', request.nextUrl.origin)
   url.searchParams.set('vaultIdle', String(vaultBalances.vaultIdle))
+  url.searchParams.set('vaultIdleUsdc', String(vaultBalances.vaultIdle))
   url.searchParams.set('strategyBalance', String(vaultBalances.strategyBalance))
+  url.searchParams.set('strategyUsdc', String(vaultBalances.strategyBalance))
   url.searchParams.set('userUsdtBalance', String(vaultBalances.userUsdtBalance))
+  url.searchParams.set('userUsdcBalance', String(vaultBalances.userUsdtBalance))
+  url.searchParams.set('principal', String(advisoryInputs.principal))
+  url.searchParams.set('holdingDays', String(advisoryInputs.holdingDays))
   return url.toString()
 }
 
@@ -226,9 +330,9 @@ async function callDifyChat(
   conversationId: string,
   userId: string,
   vaultContextUrl: string,
-  vaultBalances: Required<NonNullable<ChatRequest['vaultBalances']>>
+  vaultBalances: NormalizedVaultBalances,
+  advisoryInputs: AdvisoryInputs
 ) {
-  console.log(`${DIFY_API_BASE_URL.replace(/\/$/, '')}`)
   const response = await fetch(`${DIFY_API_BASE_URL.replace(/\/$/, '')}`, {
     method: 'POST',
     headers: {
@@ -238,9 +342,13 @@ async function callDifyChat(
     body: JSON.stringify({
       inputs: {
         vault_context_url: vaultContextUrl,
-        vault_idle: vaultBalances.vaultIdle,
-        strategy_balance: vaultBalances.strategyBalance,
-        user_usdt_balance: vaultBalances.userUsdtBalance,
+        vault_idle_usdc: vaultBalances.vaultIdle,
+        strategy_usdc: vaultBalances.strategyBalance,
+        user_usdc_balance: vaultBalances.userUsdtBalance,
+        principal: advisoryInputs.principal,
+        holding_days: advisoryInputs.holdingDays,
+        source_chain: 'base',
+        target_chain: 'arbitrum',
       },
       query: message,
       response_mode: 'blocking',
@@ -262,7 +370,7 @@ async function callDifyChat(
 
 export async function POST(request: NextRequest) {
   try {
-    const { message, user_id, conversation_id, vaultBalances }: ChatRequest = await request.json()
+    const { message, user_id, conversation_id, vaultBalances, principal, holdingDays }: ChatRequest = await request.json()
 
     if (!message || typeof message !== 'string') {
       return NextResponse.json({ error: 'Message is required and must be a string' }, { status: 400 })
@@ -278,15 +386,28 @@ export async function POST(request: NextRequest) {
 
     const balances = {
       ETH: vaultBalances?.ETH ?? 0,
-      USDT: vaultBalances?.USDT ?? 0,
-      vaultIdle: vaultBalances?.vaultIdle ?? vaultBalances?.USDT ?? 0,
+      USDT: vaultBalances?.USDC ?? vaultBalances?.USDT ?? 0,
+      vaultIdle: vaultBalances?.vaultIdle ?? vaultBalances?.USDC ?? vaultBalances?.USDT ?? 0,
       strategyBalance: vaultBalances?.strategyBalance ?? 0,
-      userUsdtBalance: vaultBalances?.userUsdtBalance ?? vaultBalances?.USDT ?? 0,
+      userUsdtBalance:
+        vaultBalances?.userUsdcBalance ??
+        vaultBalances?.userUsdtBalance ??
+        vaultBalances?.USDC ??
+        vaultBalances?.USDT ??
+        0,
     }
 
-    const vaultContextUrl = buildVaultContextUrl(request, balances)
+    const advisoryInputs = extractAdvisoryInputs(message, principal, holdingDays)
+    const vaultContextUrl = buildVaultContextUrl(request, balances, advisoryInputs)
 
-    const difyResult = await callDifyChat(message, conversation_id || '', user_id, vaultContextUrl, balances)
+    const difyResult = await callDifyChat(
+      message,
+      conversation_id || '',
+      user_id,
+      vaultContextUrl,
+      balances,
+      advisoryInputs
+    )
 
     const intent = parseIntentPayload(difyResult.rawPayload, {
       ETH: balances.ETH,

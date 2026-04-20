@@ -21,6 +21,7 @@ export function AIPanel({ onIntentParsed }: AIPanelProps) {
 
   const {
     vaultBalanceFormatted,
+    usdtBalanceFormatted,
     vaultUsdtBalanceFormatted,
     vaultTokenHoldingsFormatted,
     strategyBalanceFormatted,
@@ -42,16 +43,18 @@ export function AIPanel({ onIntentParsed }: AIPanelProps) {
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      body: JSON.stringify({
           message: rawMessage,
           user_id: address,
           conversation_id: conversationId,
           vaultBalances: {
             ETH: parseFloat(vaultBalanceFormatted) || 0,
             USDT: parseFloat(vaultUsdtBalanceFormatted) || 0,
+            USDC: parseFloat(vaultUsdtBalanceFormatted) || 0,
             vaultIdle: parseFloat(vaultTokenHoldingsFormatted) || 0,
             strategyBalance: parseFloat(strategyBalanceFormatted) || 0,
-            userUsdtBalance: parseFloat(vaultUsdtBalanceFormatted) || 0,
+            userUsdtBalance: parseFloat(usdtBalanceFormatted) || 0,
+            userUsdcBalance: parseFloat(usdtBalanceFormatted) || 0,
           },
         }),
       })
@@ -124,9 +127,11 @@ export function AIPanel({ onIntentParsed }: AIPanelProps) {
         vaultBalances: {
           ETH: parseFloat(vaultBalanceFormatted) || 0,
           USDT: parseFloat(vaultUsdtBalanceFormatted) || 0,
+          USDC: parseFloat(vaultUsdtBalanceFormatted) || 0,
           vaultIdle: parseFloat(vaultTokenHoldingsFormatted) || 0,
           strategyBalance: parseFloat(strategyBalanceFormatted) || 0,
-          userUsdtBalance: parseFloat(vaultUsdtBalanceFormatted) || 0,
+          userUsdtBalance: parseFloat(usdtBalanceFormatted) || 0,
+          userUsdcBalance: parseFloat(usdtBalanceFormatted) || 0,
         },
       }),
     })
@@ -155,7 +160,7 @@ export function AIPanel({ onIntentParsed }: AIPanelProps) {
         <div>
           <div style={{ fontWeight: 700, fontSize: '0.95rem', letterSpacing: '-0.01em' }}>AI Advisor</div>
           <div style={{ fontSize: '0.7rem', color: 'var(--text-2)', marginTop: 2 }}>
-            Try: "should I invest?" · "check my yield" · "invest 500 USDT"
+            Try: "should I invest?" · "move 5000 USDC to Arbitrum for 90 days" · "invest 500 USDC"
           </div>
         </div>
         <div style={{
@@ -274,6 +279,40 @@ export function AIPanel({ onIntentParsed }: AIPanelProps) {
             <Field label="Amount" value={String(intent.action_data.amount)} />
             <Field label="Net APY" value={`${intent.action_data.net_apy.toFixed(2)}%`} />
           </div>
+
+          {intent.action_data.type === 'cross_chain_migrate' && (
+            <div style={{
+              marginTop: 10,
+              border: '1px solid rgba(251,191,36,0.28)',
+              background: 'var(--amber-dim)',
+              borderRadius: 10,
+              padding: '0.875rem',
+            }}>
+              <div className="section-label">Cross-Chain Advisory</div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginTop: 8 }}>
+                <Field label="Route" value={`${intent.action_data.source_chain || 'base'} -> ${intent.action_data.target_chain || 'arbitrum'}`} accent="var(--amber)" />
+                <Field label="Delta APY" value={`${(intent.action_data.delta_apy || 0).toFixed(2)}%`} />
+                <Field label="Net Advantage" value={`$${(intent.action_data.net_advantage_usd || 0).toFixed(2)}`} />
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 8 }}>
+                <Field
+                  label="Breakeven"
+                  value={intent.action_data.breakeven_days === null || intent.action_data.breakeven_days === undefined ? 'N/A' : `${intent.action_data.breakeven_days.toFixed(1)} days`}
+                />
+                <Field label="Execution" value="Day 12-13" />
+              </div>
+              <div style={{ fontSize: '0.72rem', color: 'var(--text-2)', marginTop: 10, lineHeight: 1.45 }}>
+                Bridge execution is intentionally disabled for Day 11. Day 12-13 will add the guided flow:
+                bridge, switch to Arbitrum, deposit into the Arbitrum vault, then invest into Aave.
+              </div>
+            </div>
+          )}
+
+          {intent.action_data.type === 'check_yield' && (
+            <div className="alert-amber" style={{ marginTop: 10 }}>
+              Advisory only. No bridge widget is shown unless the backend-gated intent is cross_chain_migrate.
+            </div>
+          )}
 
           {intent.action === 'suggest' && (intent.action_data.type === 'invest' || intent.action_data.type === 'divest') && (
             <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>

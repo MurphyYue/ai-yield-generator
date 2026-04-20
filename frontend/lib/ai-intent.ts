@@ -12,11 +12,16 @@ export interface StrategyIntent {
   action: 'suggest' | 'intent_confirmed' | 'unknown'
   strategy_logic: string
   action_data: {
-    type: 'invest' | 'divest' | 'check_yield' | 'deposit' | 'withdraw' | 'none'
+    type: 'invest' | 'divest' | 'check_yield' | 'deposit' | 'withdraw' | 'cross_chain_migrate' | 'none'
     amount: number
     token: string
     protocol: string
     net_apy: number
+    source_chain?: 'base'
+    target_chain?: 'arbitrum'
+    delta_apy?: number
+    net_advantage_usd?: number
+    breakeven_days?: number | null
     risk_level: 'low' | 'medium' | 'high'
   }
   confidence: 'high' | 'medium' | 'low'
