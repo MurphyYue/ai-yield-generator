@@ -2561,10 +2561,10 @@ New LLM output schema for cross-chain:
 - Pass through to frontend for bridge widget rendering
 
 ### 11.5 Verification — Day 11
-- [ ] Dify returns cross-chain advisory with real APY
-- [ ] "should I invest?" compares both chains
-- [ ] Small principal (20 USDC): AI says "stay on Base"
-- [ ] Multi-turn conversation preserved
+- [x] Dify returns cross-chain advisory with real APY
+- [x] "should I invest?" compares both chains
+- [x] Small principal (20 USDC): AI says "stay on Base"
+- [x] Multi-turn conversation preserved
 
 
 ---
