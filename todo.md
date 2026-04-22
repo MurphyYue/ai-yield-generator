@@ -2632,11 +2632,11 @@ When `action_data.type === 'cross_chain_migrate'`:
 Visual comparison: two cards showing Base vs Arbitrum APY, gas, net yield.
 
 ### 12.6 Verification — Day 12-13
-- [ ] LI.FI Widget renders (no SSR error)
-- [ ] Risk modal blocks widget until checkbox confirmed
-- [ ] Widget pre-fills chain/token/amount from AI intent
-- [ ] Real bridge test: 2-5 USDC from Base → Arbitrum
-- [ ] After bridge, deposit into Arbitrum Vault works
+- [x] LI.FI Widget renders (no SSR error)
+- [x] Risk modal blocks widget until checkbox confirmed
+- [x] Widget pre-fills chain/token/amount from AI intent
+- [x] Real bridge test: 2-5 USDC from Base → Arbitrum
+- [x] After bridge, deposit into Arbitrum Vault works
 
 
 ---
