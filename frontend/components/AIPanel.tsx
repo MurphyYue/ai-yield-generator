@@ -5,6 +5,9 @@ import { useAccount } from 'wagmi'
 import { useVault } from '@/hooks/useVault'
 import { AIIntent, isLegacyIntent, isStrategyIntent, StrategyIntent } from '@/lib/ai-intent'
 import { TransactionCard } from './TransactionCard'
+import { CrossChainRiskModal } from './CrossChainRiskModal'
+import { CrossChainWidget } from './CrossChainWidget'
+import { DestinationVaultFlow } from './DestinationVaultFlow'
 
 interface AIPanelProps {
   onIntentParsed?: (intent: AIIntent) => void
@@ -18,6 +21,10 @@ export function AIPanel({ onIntentParsed }: AIPanelProps) {
   const [intent, setIntent] = useState<AIIntent | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [riskConfirmed, setRiskConfirmed] = useState(false)
+  const [showMigrationRiskModal, setShowMigrationRiskModal] = useState(false)
+  const [migrationRiskAccepted, setMigrationRiskAccepted] = useState(false)
+  const [bridgeStarted, setBridgeStarted] = useState(false)
+  const [bridgeCompleted, setBridgeCompleted] = useState(false)
 
   const {
     vaultBalanceFormatted,
@@ -38,6 +45,10 @@ export function AIPanel({ onIntentParsed }: AIPanelProps) {
     setIsLoading(true)
     setError(null)
     setRiskConfirmed(false)
+    setShowMigrationRiskModal(false)
+    setMigrationRiskAccepted(false)
+    setBridgeStarted(false)
+    setBridgeCompleted(false)
 
     try {
       const response = await fetch('/api/chat', {
@@ -101,6 +112,11 @@ export function AIPanel({ onIntentParsed }: AIPanelProps) {
     if (intent && isLegacyIntent(intent)) {
       onIntentParsed?.({ ...intent })
     }
+  }
+
+  const handleMigrationRiskAccept = () => {
+    setShowMigrationRiskModal(false)
+    setMigrationRiskAccepted(true)
   }
 
   const handleAdvisorConfirm = async () => {
@@ -302,10 +318,43 @@ export function AIPanel({ onIntentParsed }: AIPanelProps) {
                 <Field label="Execution" value="Day 12-13" />
               </div>
               <div style={{ fontSize: '0.72rem', color: 'var(--text-2)', marginTop: 10, lineHeight: 1.45 }}>
-                Bridge execution is intentionally disabled for Day 11. Day 12-13 will add the guided flow:
-                bridge, switch to Arbitrum, deposit into the Arbitrum vault, then invest into Aave.
+                The migration flow is gated behind a bridge risk acknowledgement. After bridging, the product will continue into the Arbitrum vault deposit and invest flow.
+              </div>
+
+              <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+                <button
+                  className="btn btn-amber"
+                  style={{ flex: 1 }}
+                  onClick={() => setShowMigrationRiskModal(true)}
+                >
+                  Start Guided Migration
+                </button>
+                <button
+                  className="btn btn-outline"
+                  style={{ flex: 1 }}
+                  onClick={() => setIntent(null)}
+                >
+                  Stay On Base
+                </button>
               </div>
             </div>
+          )}
+
+          {intent.action_data.type === 'cross_chain_migrate' && migrationRiskAccepted && (
+            <CrossChainWidget
+              amount={intent.action_data.amount}
+              walletAddress={address}
+              onBridgeStarted={() => setBridgeStarted(true)}
+              onBridgeCompleted={() => {
+                setBridgeStarted(true)
+                setBridgeCompleted(true)
+                setMigrationRiskAccepted(false)
+              }}
+            />
+          )}
+
+          {intent.action_data.type === 'cross_chain_migrate' && (bridgeStarted || bridgeCompleted) && (
+            <DestinationVaultFlow suggestedAmount={intent.action_data.amount} />
           )}
 
           {intent.action_data.type === 'check_yield' && (
@@ -351,10 +400,28 @@ export function AIPanel({ onIntentParsed }: AIPanelProps) {
           style={{ marginTop: 8, fontSize: '0.7rem', color: 'var(--text-3)', background: 'none', border: 'none', cursor: 'pointer' }}
           onMouseOver={e => (e.currentTarget.style.color = 'var(--text-2)')}
           onMouseOut={e => (e.currentTarget.style.color = 'var(--text-3)')}
-          onClick={() => { setMessage(''); setIntent(null); setError(null); setRiskConfirmed(false); setConversationId('') }}
+          onClick={() => {
+            setMessage('')
+            setIntent(null)
+            setError(null)
+            setRiskConfirmed(false)
+            setConversationId('')
+            setShowMigrationRiskModal(false)
+            setMigrationRiskAccepted(false)
+            setBridgeStarted(false)
+            setBridgeCompleted(false)
+          }}
         >
           Clear
         </button>
+      )}
+
+      {showMigrationRiskModal && intent && isStrategyIntent(intent) && intent.action_data.type === 'cross_chain_migrate' && (
+        <CrossChainRiskModal
+          amount={intent.action_data.amount}
+          onAccept={handleMigrationRiskAccept}
+          onCancel={() => setShowMigrationRiskModal(false)}
+        />
       )}
     </div>
   )
