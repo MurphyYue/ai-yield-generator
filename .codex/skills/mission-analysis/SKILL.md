@@ -12,8 +12,7 @@ Use this skill for pre-implementation daily mission analysis. Do not use this sk
 Start from planning and architecture sources before inspecting implementation details:
 
 1. Read the relevant day section in `todo.md`.
-2. Read relevant architecture decision records, especially `summary-report/DAYS6_14_ARCHITECTURE_DECISIONS.md` when analyzing Days 6-14.
-3. Inspect only the code/docs needed to verify readiness, gaps, and risks.
+2. Inspect only the code/docs needed to verify readiness, gaps, and risks.
 
 If a required planning source is missing, state that and continue with the best available repo context.
 

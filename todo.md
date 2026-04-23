@@ -2742,3 +2742,542 @@ Visual comparison: two cards showing Base vs Arbitrum APY, gas, net yield.
 6. **Progressive trust**: Fork test → cast smoke test (5 USDC) → frontend test → full integration. Never skip levels.
 
 ---
+
+# Days 15-19: LangGraph AI Agent + Ponder Integration
+
+## Context
+
+**Problem**: The current AI layer (Dify) is a JSON translator — the backend makes all decisions, the AI just formats them into words. This is not a real AI agent. Additionally, the Ponder indexer exists but has zero frontend consumption and only works on localhost.
+
+**Goal**: Build a genuine LangGraph-based AI agent that reasons over raw data, makes its own recommendations, remembers user preferences across sessions, and proactively monitors alerts. Integrate Ponder for transaction history display.
+
+**What makes this a real agent (not just a chatbot)**:
+1. Agent calls tools to gather data (not fed pre-computed answers)
+2. Agent reasons over raw data to form recommendations
+3. Agent has persistent memory (alerts, preferences, conversation history)
+4. Agent proactively checks stored alerts on each interaction
+5. Agent notices things the user didn't ask about (idle funds, triggered alerts)
+
+**Engineering level**: This demonstrates backend service architecture (state persistence, tool orchestration, streaming) alongside AI agent design — both critical for a Senior Full-Stack Web3 Engineer.
+
+---
+
+## Architecture: Dify → LangGraph
+
+```
+BEFORE (Dify):
+  Frontend → /api/chat → Dify (external) → formats backend decision → response
+  AI intelligence: 0%  Backend intelligence: 100%
+
+AFTER (LangGraph):
+  Frontend → /api/chat → LangGraph Agent (in-process)
+                           ├── Tool: get_yield_data (raw APY + gas)
+                           ├── Tool: get_user_positions (on-chain balances)
+                           ├── Tool: get_user_history (Ponder GraphQL)
+                           ├── Tool: check_alerts (SQLite)
+                           ├── Tool: set_alert (SQLite)
+                           ├── Tool: calculate_costs (pure math)
+                           └── LLM reasoning over all data
+                               → structured intent response
+  AI intelligence: 70%  Backend intelligence: 30% (raw data only)
+```
+
+Key change: vault-context API is refactored to return **raw data only** — no `shouldSuggestMigration`, no `recommendation`. The agent reasons over the numbers itself.
+
+---
+
+## Agent Graph Structure
+
+```
+                    ┌─────────────┐
+                    │   START     │
+                    └──────┬──────┘
+                           │
+                    ┌──────▼──────┐
+                    │ checkAlerts │ ← proactive: check stored alerts first
+                    └──────┬──────┘
+                           │
+                    ┌──────▼──────┐
+                    │ planAction  │ ← LLM decides which tools to call
+                    └──────┬──────┘
+                           │
+                    ┌──────▼──────┐
+                    │ executeTools│ ← call selected tools (yield data, positions, history)
+                    └──────┬──────┘
+                           │
+                    ┌──────▼──────┐
+                    │   reason    │ ← LLM reasons over all gathered data
+                    └──────┬──────┘
+                           │
+                    ┌──────▼──────┐
+                    │ formatIntent│ ← produce structured JSON for frontend
+                    └──────┬──────┘
+                           │
+              ┌────────────┴────────────┐
+              │                         │
+     ┌────────▼────────┐     ┌─────────▼────────┐
+     │ directResponse  │     │ humanApproval    │ ← high-risk actions
+     └─────────────────┘     └────────┬─────────┘
+                                      │
+                              ┌───────▼───────┐
+                              │   INTERRUPT   │ ← pause, wait for user
+                              └───────────────┘
+```
+
+---
+
+## Agent Tools Definition
+
+| Tool | Input | Output | Data Source |
+|------|-------|--------|-------------|
+| `get_yield_data` | none | `{ base: { apy, gas }, arbitrum: { apy, gas } }` | vault-context API (raw data only) |
+| `get_user_positions` | `wallet_address` | `{ baseVault: { idle, invested }, arbVault: { idle, invested } }` | On-chain reads (viem) |
+| `get_user_history` | `wallet_address, limit` | `[{ type, amount, token, chain, timestamp }]` | Ponder GraphQL |
+| `check_alerts` | `wallet_address` | `[{ type, threshold, triggered, message }]` | SQLite |
+| `set_alert` | `wallet_address, type, params` | `{ success, alert_id }` | SQLite |
+| `calculate_costs` | `principal, source, target` | `{ bridgeFee, returnFee, gas, slippage, total, breakeven }` | Pure function |
+
+---
+
+## Day 15: LangGraph Core + Agent Structure
+
+### 15.1 Install dependencies
+
+```bash
+cd frontend
+npm install @langchain/langgraph @langchain/core @langchain/anthropic
+# Or @langchain/openai if using OpenAI
+```
+
+Also install SQLite for state persistence:
+```bash
+npm install better-sqlite3
+npm install -D @types/better-sqlite3
+```
+
+### 15.2 Create agent graph structure
+
+**File**: `frontend/lib/agent/graph.ts` (NEW)
+
+Define the LangGraph StateGraph:
+- State schema (messages, vaultContext, userPositions, alerts, intent)
+- Node definitions (checkAlerts, planAction, executeTools, reason, formatIntent)
+- Edge routing (direct response vs human approval)
+- Checkpoint persistence (SQLite)
+
+**File**: `frontend/lib/agent/state.ts` (NEW)
+
+Define the agent state type:
+```typescript
+interface AgentState {
+  messages: BaseMessage[]
+  userId: string           // wallet address
+  vaultContext: any | null  // raw yield + gas data from both chains
+  userPositions: any | null // current balances
+  userHistory: any | null   // past transactions from Ponder
+  alerts: Alert[]          // stored alerts for this user
+  intent: AIIntent | null  // final structured output
+  requiresApproval: boolean
+}
+```
+
+### 15.3 Create tool definitions
+
+**File**: `frontend/lib/agent/tools.ts` (NEW)
+
+Define LangGraph tools:
+- `get_yield_data` — calls vault-context API internally (refactored to raw data)
+- `get_user_positions` — reads on-chain balances via viem
+- `calculate_costs` — pure math for cross-chain costs
+
+### 15.4 Create system prompt
+
+**File**: `frontend/lib/agent/prompts.ts` (NEW)
+
+Embed `Aave_Strategy_Context.md` content directly as system prompt (no vector store needed — document is small enough). Add reasoning instructions:
+
+```
+You are a DeFi strategy advisor agent. You have tools to read real-time on-chain data.
+
+IMPORTANT: You make decisions based on data you gather. Do NOT invent numbers.
+Call tools first, then reason over the results.
+
+When a user asks about yield or investing:
+1. Call get_yield_data to see current APY on both chains
+2. Call get_user_positions to see their current balances
+3. Reason: is investing/migrating worthwhile for THIS user's specific situation?
+4. Consider: principal size, holding period, bridge costs, risk tolerance
+
+When suggesting cross-chain migration:
+- Calculate ALL costs: bridge out + bridge return + destination gas + slippage
+- If net advantage < $1 OR principal < $100: recommend staying
+- Always explain your reasoning with actual numbers
+
+You can also notice things the user didn't ask:
+- If they have idle funds: suggest investing
+- If an alert is triggered: warn them before answering their question
+- If they asked about yield but have nothing invested: suggest depositing first
+```
+
+### 15.5 Refactor vault-context API to return raw data only
+
+**File**: `frontend/app/api/vault-context/route.ts` (MODIFY)
+
+Remove: `shouldSuggestMigration`, `recommendation`, `reasonCodes`, `summaryReason`
+Keep: raw APY, gas prices, bridge fee estimates, balances
+
+The agent now decides. The API just provides facts.
+
+### 15.6 Verification — Day 15
+- [ ] LangGraph dependencies installed
+- [ ] Agent graph compiles and runs with a test message
+- [ ] Tools defined and callable (get_yield_data returns real data)
+- [ ] System prompt embedded with strategy knowledge
+- [ ] vault-context API returns raw data only (no decisions)
+
+---
+
+## Day 16: Ponder Upgrade + Transaction History Tool
+
+### 16.1 Ponder conceptual background for Murphy
+
+**What Ponder is**: An event indexer. When your VaultV3 contract emits events (Deposited, Withdrawn, Invested, Divested), Ponder catches them and stores them in a database. The database is queryable via GraphQL.
+
+**Why it exists**: Reading historical events from the blockchain is slow and expensive. Ponder transforms "cold" blockchain event logs into "hot" queryable data.
+
+**Current state**: Your Ponder only indexes on localhost (Anvil, chain 31337). It needs to be reconfigured for Base mainnet.
+
+```
+Current:  Anvil events → Ponder → SQLite → GraphQL (localhost:42069)
+Target:   Base events  → Ponder → SQLite → GraphQL (localhost:42069)
+          (optionally also Arbitrum events)
+```
+
+### 16.2 Upgrade Ponder for Base mainnet
+
+**File**: `ponder-indexing/ponder.config.ts` (MODIFY)
+
+Change from Anvil to Base mainnet:
+```typescript
+chains: {
+  base: {
+    id: 8453,
+    rpc: process.env.PONDER_RPC_URL_8453 ?? "https://base-mainnet.g.alchemy.com/v2/YOUR_KEY",
+  },
+},
+contracts: {
+  VaultV3: {
+    chain: "base",
+    abi: VaultV3Json.abi,
+    address: "<your Base VaultV3 address>",
+    startBlock: <deployment block number>,  // find on BaseScan
+  },
+},
+```
+
+### 16.3 Extend Ponder schema for more event types
+
+**File**: `ponder-indexing/ponder.schema.ts` (MODIFY)
+
+Add tables for all vault events:
+```typescript
+export const depositHistory = onchainTable("deposit_history", (t) => ({
+  id: t.text().primaryKey(),
+  user: t.hex().notNull(),
+  token: t.hex().notNull(),
+  amount: t.bigint().notNull(),
+  eventType: t.text().notNull(),  // "deposit" | "withdraw" | "invest" | "divest"
+  blockNumber: t.bigint().notNull(),
+  blockTimestamp: t.integer().notNull(),
+  transactionHash: t.hex().notNull(),
+}))
+```
+
+### 16.4 Add event handlers
+
+**File**: `ponder-indexing/src/index.ts` (MODIFY)
+
+Add handlers for: TokenDeposited, TokenWithdrawn, Invested, Divested
+
+### 16.5 Create get_user_history agent tool
+
+**File**: `frontend/lib/agent/tools.ts` (ADD to existing)
+
+Tool that queries Ponder GraphQL:
+```typescript
+// get_user_history tool
+// Input: { wallet_address, limit }
+// Queries: http://localhost:42069/graphql
+// Returns: last N transactions for this user
+```
+
+### 16.6 Create Transaction History frontend component
+
+**File**: `frontend/components/TransactionHistory.tsx` (NEW)
+
+Simple table/list showing user's past transactions:
+- Fetches from Ponder GraphQL on mount
+- Shows: type (deposit/withdraw/invest/divest), amount, token, time, tx link
+- Pagination (show 10, load more)
+
+**File**: `frontend/components/VaultDashboard.tsx` (MODIFY)
+
+Add TransactionHistory to the layout.
+
+### 16.7 Verification — Day 16
+- [ ] Ponder running against Base mainnet (indexing real events)
+- [ ] All 4 event types indexed (deposit, withdraw, invest, divest)
+- [ ] Agent's get_user_history tool returns real transaction data
+- [ ] TransactionHistory component renders user's past transactions
+- [ ] GraphQL query at localhost:42069 returns correct data
+
+---
+
+## Day 17: State Persistence + Alert System
+
+### 17.1 Set up SQLite for agent state
+
+**File**: `frontend/lib/agent/db.ts` (NEW)
+
+Create SQLite database with tables:
+```sql
+-- Agent conversation checkpoints (LangGraph manages this)
+-- We just configure the checkpoint saver
+
+-- User alerts (our custom feature)
+CREATE TABLE alerts (
+  id TEXT PRIMARY KEY,
+  user_address TEXT NOT NULL,
+  alert_type TEXT NOT NULL,        -- "apy_threshold" | "position_change"
+  chain TEXT NOT NULL,             -- "base" | "arbitrum"
+  threshold REAL,                  -- e.g., 2.0 (APY percentage)
+  created_at INTEGER NOT NULL,
+  triggered_at INTEGER,            -- null if not yet triggered
+  active INTEGER DEFAULT 1
+);
+
+-- Conversation metadata
+CREATE TABLE conversations (
+  thread_id TEXT PRIMARY KEY,
+  user_address TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  last_message_at INTEGER NOT NULL
+);
+```
+
+### 17.2 Create alert tools
+
+**File**: `frontend/lib/agent/tools.ts` (ADD)
+
+```typescript
+// set_alert: stores a new monitoring alert
+// check_alerts: reads active alerts, checks against current data, returns triggered ones
+```
+
+### 17.3 Wire checkpoint persistence
+
+**File**: `frontend/lib/agent/graph.ts` (MODIFY)
+
+Configure LangGraph to use SQLite for checkpointing:
+```typescript
+import { SqliteSaver } from "@langchain/langgraph/checkpoint/sqlite"
+
+const checkpointer = new SqliteSaver(db)
+const app = graph.compile({ checkpointer })
+```
+
+This means: conversation state persists across server restarts. User can close browser, come back tomorrow, and the agent remembers the conversation.
+
+### 17.4 Add checkAlerts node to graph
+
+The graph's first node after START checks alerts before doing anything else. If a user set "alert me if APY drops below 3%" and the APY is now 2.8%, the agent warns them immediately — even if they asked a different question.
+
+### 17.5 Verification — Day 17
+- [ ] SQLite database created with alerts + conversations tables
+- [ ] Agent can set an alert: "alert me if Base APY drops below 3%"
+- [ ] Alert persists across server restarts
+- [ ] On next conversation, agent checks alerts and warns if triggered
+- [ ] Conversation state persists (multi-turn works after restart)
+
+---
+
+## Day 18: Streaming Responses + Update /api/chat
+
+### 18.1 Replace Dify call with LangGraph invocation
+
+**File**: `frontend/app/api/chat/route.ts` (REWRITE)
+
+The API route now invokes the LangGraph agent instead of Dify:
+```typescript
+export async function POST(request: NextRequest) {
+  const { message, user_id, conversation_id } = await request.json()
+
+  const agent = getAgent()  // get compiled LangGraph graph
+  const thread_id = conversation_id || generateThreadId()
+
+  const result = await agent.invoke(
+    { messages: [new HumanMessage(message)] },
+    { configurable: { thread_id, user_id } }
+  )
+
+  // Extract structured intent from agent's final state
+  const intent = result.intent
+  return NextResponse.json({ success: true, intent, conversation_id: thread_id })
+}
+```
+
+### 18.2 Add streaming support (Server-Sent Events)
+
+**File**: `frontend/app/api/chat/stream/route.ts` (NEW)
+
+For a better UX, stream the agent's thinking process:
+```typescript
+export async function POST(request: NextRequest) {
+  // Return a ReadableStream that sends events as the agent works
+  const stream = new ReadableStream({
+    async start(controller) {
+      // Agent streams: "Reading yield data..." → "Checking your positions..." → "Analyzing..."
+      for await (const event of agent.stream(input, config)) {
+        controller.enqueue(`data: ${JSON.stringify(event)}\n\n`)
+      }
+      controller.close()
+    }
+  })
+  return new Response(stream, { headers: { 'Content-Type': 'text/event-stream' } })
+}
+```
+
+### 18.3 Update AIPanel for streaming (optional, time permitting)
+
+**File**: `frontend/components/AIPanel.tsx` (MODIFY)
+
+If time permits, consume SSE stream to show agent's thinking steps:
+```
+🔍 Reading yield data from Base and Arbitrum...
+📊 Base: 3.2% APY | Arbitrum: 5.1% APY
+💰 Checking your positions... 20 USDC idle on Base
+🧮 Calculating migration costs...
+💡 Forming recommendation...
+```
+
+If time is tight, keep the existing blocking request. Streaming is a nice-to-have.
+
+### 18.4 Remove Dify dependencies
+
+- Remove Dify API key from `.env` and `.env.local`
+- Remove Dify-specific code from route.ts
+- Keep the intent type definitions (they're used by frontend components)
+
+### 18.5 Verification — Day 18
+- [ ] /api/chat now invokes LangGraph agent (not Dify)
+- [ ] Agent returns structured StrategyIntent (same format as before)
+- [ ] Frontend works with new backend (no UI changes needed for basic flow)
+- [ ] Conversation multi-turn works via thread_id
+- [ ] (Optional) Streaming endpoint returns SSE events
+- [ ] Dify env vars removed
+
+---
+
+## Day 19: Integration Testing + Polish + Portfolio
+
+### 19.1 Full agent test suite
+
+Test these conversations end-to-end:
+
+**Basic yield query:**
+- [ ] "should I invest?" → agent calls get_yield_data + get_user_positions → recommendation
+
+**Cross-chain advisory:**
+- [ ] "should I migrate to Arbitrum?" → agent reasons with real APY data → nuanced answer
+
+**Transaction history:**
+- [ ] "show me my last deposits" → agent calls get_user_history → formatted response
+
+**Alert system:**
+- [ ] "alert me if Base APY drops below 3%" → agent stores alert
+- [ ] Next message: agent checks alert, warns if triggered
+
+**Proactive intelligence:**
+- [ ] User asks "check my yield" but has idle funds → agent notices and suggests investing
+
+**Multi-turn memory:**
+- [ ] Turn 1: "should I invest?" → suggestion
+- [ ] Turn 2: "yes do it" → agent remembers context → returns intent_confirmed
+
+**Cross-chain with human approval:**
+- [ ] Agent suggests migration → requiresApproval: true → frontend shows risk modal
+
+### 19.2 Final README.md and demo video
+
+**File**: `README.md` (UPDATE)
+
+Add LangGraph section:
+```
+## AI Agent Architecture
+Built with LangGraph (TypeScript) — not a chatbot wrapper.
+- 6 tools: yield data, positions, history, alerts, cost calculation
+- SQLite-backed state persistence
+- Proactive alert monitoring
+- Human-in-the-loop for high-risk operations
+- Streaming responses via Server-Sent Events
+```
+
+**Demo video** (3 minutes):
+1. "Should I invest?" → agent reasons with real data
+2. "Alert me if APY drops below 3%" → stored
+3. "Show my transaction history" → Ponder data displayed
+4. Cross-chain flow → risk modal → bridge
+5. Next conversation → agent checks alert proactively
+
+### 19.3 Clean up and push
+
+- [ ] Remove all Dify references from code and env files
+- [ ] Ensure .env.example has correct vars (LLM API key, not Dify key)
+- [ ] No secrets in git history
+- [ ] All summary reports updated
+- [ ] GitHub repo public and clean
+
+### 19.4 Verification — Day 19
+- [ ] All integration tests pass
+- [ ] Agent makes genuinely intelligent recommendations (not just relaying backend decisions)
+- [ ] Transaction history renders from Ponder
+- [ ] Alerts persist and trigger correctly
+- [ ] README updated with LangGraph architecture
+- [ ] Demo video recorded
+- [ ] **Day 20: STOP BUILDING. FULL-TIME JOB SEARCH.**
+
+---
+
+## Files Summary
+
+### New Files
+| File | Purpose |
+|------|---------|
+| `frontend/lib/agent/graph.ts` | LangGraph StateGraph definition |
+| `frontend/lib/agent/state.ts` | Agent state type definitions |
+| `frontend/lib/agent/tools.ts` | Tool definitions (yield, positions, history, alerts, costs) |
+| `frontend/lib/agent/prompts.ts` | System prompt with embedded strategy knowledge |
+| `frontend/lib/agent/db.ts` | SQLite setup for alerts + conversation persistence |
+| `frontend/app/api/chat/stream/route.ts` | SSE streaming endpoint (optional) |
+| `frontend/components/TransactionHistory.tsx` | Transaction history display from Ponder |
+
+### Modified Files
+| File | Changes |
+|------|---------|
+| `frontend/app/api/chat/route.ts` | Replace Dify with LangGraph agent invocation |
+| `frontend/app/api/vault-context/route.ts` | Remove decisions, return raw data only |
+| `frontend/components/AIPanel.tsx` | Minor: streaming support (optional) |
+| `frontend/components/VaultDashboard.tsx` | Add TransactionHistory component |
+| `ponder-indexing/ponder.config.ts` | Switch from Anvil to Base mainnet |
+| `ponder-indexing/ponder.schema.ts` | Add eventType column, expand schema |
+| `ponder-indexing/src/index.ts` | Add handlers for withdraw, invest, divest events |
+
+### Removed
+| Item | Reason |
+|------|--------|
+| Dify API key in .env | No longer using Dify |
+| Dify-specific parsing code in route.ts | Replaced by LangGraph |
+| `shouldSuggestMigration` in vault-context | Agent decides, not backend |
+
+---
+
