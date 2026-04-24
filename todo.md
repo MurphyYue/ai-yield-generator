@@ -2774,8 +2774,8 @@ AFTER (LangGraph):
                            ├── Tool: get_yield_data (raw APY + gas)
                            ├── Tool: get_user_positions (on-chain balances)
                            ├── Tool: get_user_history (Ponder GraphQL)
-                           ├── Tool: check_alerts (SQLite)
-                           ├── Tool: set_alert (SQLite)
+                           ├── Tool: check_alerts (PostgreSQL)
+                           ├── Tool: set_alert (PostgreSQL)
                            ├── Tool: calculate_costs (pure math)
                            └── LLM reasoning over all data
                                → structured intent response
@@ -2833,8 +2833,8 @@ Key change: vault-context API is refactored to return **raw data only** — no `
 | `get_yield_data` | none | `{ base: { apy, gas }, arbitrum: { apy, gas } }` | vault-context API (raw data only) |
 | `get_user_positions` | `wallet_address` | `{ baseVault: { idle, invested }, arbVault: { idle, invested } }` | On-chain reads (viem) |
 | `get_user_history` | `wallet_address, limit` | `[{ type, amount, token, chain, timestamp }]` | Ponder GraphQL |
-| `check_alerts` | `wallet_address` | `[{ type, threshold, triggered, message }]` | SQLite |
-| `set_alert` | `wallet_address, type, params` | `{ success, alert_id }` | SQLite |
+| `check_alerts` | `wallet_address` | `[{ type, threshold, triggered, message }]` | PostgreSQL |
+| `set_alert` | `wallet_address, type, params` | `{ success, alert_id }` | PostgreSQL |
 | `calculate_costs` | `principal, source, target` | `{ bridgeFee, returnFee, gas, slippage, total, breakeven }` | Pure function |
 
 ---
@@ -2849,10 +2849,25 @@ npm install @langchain/langgraph @langchain/core @langchain/anthropic
 # Or @langchain/openai if using OpenAI
 ```
 
-Also install SQLite for state persistence:
+Also install PostgreSQL client for state persistence:
 ```bash
-npm install better-sqlite3
-npm install -D @types/better-sqlite3
+npm install pg @langchain/langgraph-checkpoint-postgres
+npm install -D @types/pg
+```
+
+Start PostgreSQL via Docker (run once, reuse across sessions):
+```bash
+docker run --name vault-postgres \
+  -e POSTGRES_USER=vault \
+  -e POSTGRES_PASSWORD=vault \
+  -e POSTGRES_DB=vault \
+  -p 5432:5432 \
+  -d postgres:16
+```
+
+Add to `.env`:
+```
+DATABASE_URL=postgresql://vault:vault@localhost:5432/vault
 ```
 
 ### 15.2 Create agent graph structure
@@ -2863,7 +2878,7 @@ Define the LangGraph StateGraph:
 - State schema (messages, vaultContext, userPositions, alerts, intent)
 - Node definitions (checkAlerts, planAction, executeTools, reason, formatIntent)
 - Edge routing (direct response vs human approval)
-- Checkpoint persistence (SQLite)
+- Checkpoint persistence (PostgreSQL via Docker)
 
 **File**: `frontend/lib/agent/state.ts` (NEW)
 
@@ -2948,9 +2963,9 @@ The agent now decides. The API just provides facts.
 **Current state**: Your Ponder only indexes on localhost (Anvil, chain 31337). It needs to be reconfigured for Base mainnet.
 
 ```
-Current:  Anvil events → Ponder → SQLite → GraphQL (localhost:42069)
-Target:   Base events  → Ponder → SQLite → GraphQL (localhost:42069)
-          (optionally also Arbitrum events)
+Current:  Anvil events → Ponder → PGlite → GraphQL (localhost:42069)
+Target:   Base events  → Ponder → PostgreSQL → GraphQL (localhost:42069)
+          (Ponder and LangGraph share the same PostgreSQL instance)
 ```
 
 ### 16.2 Upgrade Ponder for Base mainnet
@@ -3035,35 +3050,44 @@ Add TransactionHistory to the layout.
 
 ## Day 17: State Persistence + Alert System
 
-### 17.1 Set up SQLite for agent state
+### 17.1 Set up PostgreSQL for agent state
+
+PostgreSQL should already be running from Day 15 Docker setup. Verify:
+```bash
+docker ps | grep vault-postgres
+# If not running: docker start vault-postgres
+```
 
 **File**: `frontend/lib/agent/db.ts` (NEW)
 
-Create SQLite database with tables:
+Create PostgreSQL connection and tables:
 ```sql
--- Agent conversation checkpoints (LangGraph manages this)
--- We just configure the checkpoint saver
-
 -- User alerts (our custom feature)
-CREATE TABLE alerts (
+CREATE TABLE IF NOT EXISTS alerts (
   id TEXT PRIMARY KEY,
   user_address TEXT NOT NULL,
   alert_type TEXT NOT NULL,        -- "apy_threshold" | "position_change"
   chain TEXT NOT NULL,             -- "base" | "arbitrum"
   threshold REAL,                  -- e.g., 2.0 (APY percentage)
-  created_at INTEGER NOT NULL,
-  triggered_at INTEGER,            -- null if not yet triggered
-  active INTEGER DEFAULT 1
+  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  triggered_at TIMESTAMP,          -- null if not yet triggered
+  active BOOLEAN DEFAULT TRUE
 );
 
 -- Conversation metadata
-CREATE TABLE conversations (
+CREATE TABLE IF NOT EXISTS conversations (
   thread_id TEXT PRIMARY KEY,
   user_address TEXT NOT NULL,
-  created_at INTEGER NOT NULL,
-  last_message_at INTEGER NOT NULL
+  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  last_message_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
+
+-- Create indexes for common queries
+CREATE INDEX IF NOT EXISTS idx_alerts_user ON alerts(user_address, active);
+CREATE INDEX IF NOT EXISTS idx_conversations_user ON conversations(user_address);
 ```
+
+Use `pg` client for direct queries (alerts, conversations) and `PostgresSaver` for LangGraph checkpoints.
 
 ### 17.2 Create alert tools
 
@@ -3078,11 +3102,12 @@ CREATE TABLE conversations (
 
 **File**: `frontend/lib/agent/graph.ts` (MODIFY)
 
-Configure LangGraph to use SQLite for checkpointing:
+Configure LangGraph to use PostgreSQL for checkpointing:
 ```typescript
-import { SqliteSaver } from "@langchain/langgraph/checkpoint/sqlite"
+import { PostgresSaver } from "@langchain/langgraph-checkpoint-postgres"
 
-const checkpointer = new SqliteSaver(db)
+const checkpointer = PostgresSaver.fromConnString(process.env.DATABASE_URL!)
+await checkpointer.setup()  // creates checkpoint tables automatically
 const app = graph.compile({ checkpointer })
 ```
 
@@ -3093,11 +3118,11 @@ This means: conversation state persists across server restarts. User can close b
 The graph's first node after START checks alerts before doing anything else. If a user set "alert me if APY drops below 3%" and the APY is now 2.8%, the agent warns them immediately — even if they asked a different question.
 
 ### 17.5 Verification — Day 17
-- [ ] SQLite database created with alerts + conversations tables
+- [ ] PostgreSQL running via Docker, tables created
 - [ ] Agent can set an alert: "alert me if Base APY drops below 3%"
-- [ ] Alert persists across server restarts
+- [ ] Alert persists in PostgreSQL across server restarts
 - [ ] On next conversation, agent checks alerts and warns if triggered
-- [ ] Conversation state persists (multi-turn works after restart)
+- [ ] Conversation state persists via PostgresSaver (multi-turn works after restart)
 
 ---
 
@@ -3216,7 +3241,7 @@ Add LangGraph section:
 ## AI Agent Architecture
 Built with LangGraph (TypeScript) — not a chatbot wrapper.
 - 6 tools: yield data, positions, history, alerts, cost calculation
-- SQLite-backed state persistence
+- PostgreSQL-backed state persistence (Docker)
 - Proactive alert monitoring
 - Human-in-the-loop for high-risk operations
 - Streaming responses via Server-Sent Events
@@ -3257,7 +3282,7 @@ Built with LangGraph (TypeScript) — not a chatbot wrapper.
 | `frontend/lib/agent/state.ts` | Agent state type definitions |
 | `frontend/lib/agent/tools.ts` | Tool definitions (yield, positions, history, alerts, costs) |
 | `frontend/lib/agent/prompts.ts` | System prompt with embedded strategy knowledge |
-| `frontend/lib/agent/db.ts` | SQLite setup for alerts + conversation persistence |
+| `frontend/lib/agent/db.ts` | PostgreSQL connection + alerts/conversations table setup |
 | `frontend/app/api/chat/stream/route.ts` | SSE streaming endpoint (optional) |
 | `frontend/components/TransactionHistory.tsx` | Transaction history display from Ponder |
 
