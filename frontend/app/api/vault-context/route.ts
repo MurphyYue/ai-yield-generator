@@ -9,27 +9,17 @@ import {
   VIRTUAL_ETH_PRICE_USD,
 } from '@/lib/aave'
 
+// Fixed cost estimates used in cross-chain calculations
 const DEFAULT_HOLDING_DAYS = 30
 const ESTIMATED_BRIDGE_FEE_USD = 0.5
 const ESTIMATED_RETURN_BRIDGE_FEE_USD = 0.5
 const SLIPPAGE_RATE = 0.001
-const MIN_MIGRATION_PRINCIPAL_USD = 100
-const MIN_NET_ADVANTAGE_USD = 1
 
 interface VaultSnapshot {
   idleUsdc: number
   strategyUsdc: number
   userUsdc: number
 }
-
-type CrossChainReasonCode =
-  | 'MIGRATION_PROFITABLE'
-  | 'NO_PRINCIPAL'
-  | 'SMALL_PRINCIPAL'
-  | 'NO_APY_ADVANTAGE'
-  | 'NET_ADVANTAGE_NEGATIVE'
-  | 'NET_ADVANTAGE_BELOW_THRESHOLD'
-  | 'BRIDGE_RISK_NOT_JUSTIFIED'
 
 interface ChainMarketSnapshot {
   chainId: number
@@ -42,6 +32,8 @@ interface ChainMarketSnapshot {
   estimatedTxCostUsd: number
 }
 
+// Raw cross-chain economics — no decisions, no recommendations.
+// The agent reasons over these numbers and makes its own call.
 interface CrossChainSnapshot {
   sourceChain: 'base'
   targetChain: 'arbitrum'
@@ -56,10 +48,6 @@ interface CrossChainSnapshot {
   totalEstimatedCostUsd: number
   netAdvantageUsd: number | null
   breakevenDays: number | null
-  shouldSuggestMigration: boolean
-  recommendation: 'migrate' | 'stay'
-  reasonCodes: CrossChainReasonCode[]
-  summaryReason: string
 }
 
 interface VaultContextResponse {
@@ -81,7 +69,6 @@ function parseNumber(value: string | null, fallback = 0): number {
 
 function getVaultSnapshot(request: NextRequest): VaultSnapshot {
   const params = request.nextUrl.searchParams
-
   return {
     idleUsdc: parseNumber(params.get('vaultIdleUsdc') ?? params.get('vaultIdle')),
     strategyUsdc: parseNumber(params.get('strategyUsdc') ?? params.get('strategyBalance')),
@@ -93,15 +80,12 @@ function getRpcUrl(chain: 'base' | 'arbitrum'): string | undefined {
   if (chain === 'base') {
     return process.env.BASE_RPC_URL || process.env.NEXT_PUBLIC_BASE_RPC_URL
   }
-
   return process.env.ARBITRUM_RPC_URL || process.env.NEXT_PUBLIC_ARBITRUM_RPC_URL
 }
 
 async function getChainSnapshot(chain: 'base' | 'arbitrum'): Promise<ChainMarketSnapshot> {
   const rpcUrl = getRpcUrl(chain)
-  if (!rpcUrl) {
-    throw new Error(`Missing ${chain} RPC configuration`)
-  }
+  if (!rpcUrl) throw new Error(`Missing ${chain} RPC configuration`)
 
   const market = MAINNET_AAVE_MARKETS[chain]
   const client = createPublicClient({
@@ -121,8 +105,7 @@ async function getChainSnapshot(chain: 'base' | 'arbitrum'): Promise<ChainMarket
 
   const supplyApy = (Number(reserveData.currentLiquidityRate) / Number(RAY)) * 100
   const gasPriceGwei = Number(gasPrice) / 1e9
-  const estimatedTxCostUsd =
-    (Number(gasPrice * DEFAULT_GAS_UNITS) / 1e18) * VIRTUAL_ETH_PRICE_USD
+  const estimatedTxCostUsd = (Number(gasPrice * DEFAULT_GAS_UNITS) / 1e18) * VIRTUAL_ETH_PRICE_USD
 
   return {
     chainId: market.chainId,
@@ -158,50 +141,9 @@ function buildCrossChainSnapshot(
   const netAdvantageUsd =
     principal > 0 ? grossYieldAdvantageUsd - totalEstimatedCostUsd : null
   const dailyYieldAdvantageUsd =
-    principal > 0 && deltaApy > 0 ? principal * (deltaApy / 100) / 365 : 0
+    principal > 0 && deltaApy > 0 ? (principal * (deltaApy / 100)) / 365 : 0
   const breakevenDays =
     dailyYieldAdvantageUsd > 0 ? totalEstimatedCostUsd / dailyYieldAdvantageUsd : null
-  const reasonCodes: CrossChainReasonCode[] = []
-
-  if (principal <= 0) {
-    reasonCodes.push('NO_PRINCIPAL')
-  }
-  if (principal > 0 && principal < MIN_MIGRATION_PRINCIPAL_USD) {
-    reasonCodes.push('SMALL_PRINCIPAL')
-  }
-  if (deltaApy <= 0) {
-    reasonCodes.push('NO_APY_ADVANTAGE')
-  }
-  if (netAdvantageUsd !== null && netAdvantageUsd <= 0) {
-    reasonCodes.push('NET_ADVANTAGE_NEGATIVE')
-  }
-  if (
-    netAdvantageUsd !== null &&
-    netAdvantageUsd > 0 &&
-    netAdvantageUsd <= MIN_NET_ADVANTAGE_USD
-  ) {
-    reasonCodes.push('NET_ADVANTAGE_BELOW_THRESHOLD')
-  }
-
-  const shouldSuggestMigration =
-    principal >= MIN_MIGRATION_PRINCIPAL_USD &&
-    deltaApy > 0 &&
-    netAdvantageUsd !== null &&
-    netAdvantageUsd > MIN_NET_ADVANTAGE_USD
-
-  if (shouldSuggestMigration) {
-    reasonCodes.push('MIGRATION_PROFITABLE')
-  } else if (principal > 0) {
-    reasonCodes.push('BRIDGE_RISK_NOT_JUSTIFIED')
-  }
-
-  const recommendation: 'migrate' | 'stay' = shouldSuggestMigration ? 'migrate' : 'stay'
-  const summaryReason = buildSummaryReason({
-    principal,
-    deltaApy,
-    netAdvantageUsd,
-    shouldSuggestMigration,
-  })
 
   return {
     sourceChain: 'base',
@@ -217,49 +159,7 @@ function buildCrossChainSnapshot(
     totalEstimatedCostUsd,
     netAdvantageUsd,
     breakevenDays,
-    shouldSuggestMigration,
-    recommendation,
-    reasonCodes,
-    summaryReason,
   }
-}
-
-function buildSummaryReason({
-  principal,
-  deltaApy,
-  netAdvantageUsd,
-  shouldSuggestMigration,
-}: {
-  principal: number
-  deltaApy: number
-  netAdvantageUsd: number | null
-  shouldSuggestMigration: boolean
-}): string {
-  if (principal <= 0) {
-    return 'No principal was provided, so migration cannot be evaluated.'
-  }
-
-  if (principal < MIN_MIGRATION_PRINCIPAL_USD) {
-    return `Principal is below $${MIN_MIGRATION_PRINCIPAL_USD}, so fixed bridge costs and bridge risk usually dominate expected yield.`
-  }
-
-  if (deltaApy <= 0) {
-    return 'Arbitrum does not currently offer a positive APY advantage over Base.'
-  }
-
-  if (netAdvantageUsd === null) {
-    return 'Net advantage could not be calculated from the provided inputs.'
-  }
-
-  if (shouldSuggestMigration) {
-    return `Estimated net advantage is above the $${MIN_NET_ADVANTAGE_USD} migration threshold after bridge, gas, and slippage costs.`
-  }
-
-  if (netAdvantageUsd <= 0) {
-    return 'Estimated net advantage is negative after bridge, gas, and slippage costs.'
-  }
-
-  return `Estimated net advantage is positive but below the $${MIN_NET_ADVANTAGE_USD} threshold, so bridge risk is not justified.`
 }
 
 export async function GET(request: NextRequest) {
@@ -269,7 +169,6 @@ export async function GET(request: NextRequest) {
       getChainSnapshot('base'),
       getChainSnapshot('arbitrum'),
     ])
-
     const crossChain = buildCrossChainSnapshot(baseSnapshot, arbitrumSnapshot, request)
 
     return NextResponse.json({
@@ -284,13 +183,6 @@ export async function GET(request: NextRequest) {
     } satisfies VaultContextResponse)
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown vault context failure'
-
-    return NextResponse.json(
-      {
-        success: false,
-        error: message,
-      },
-      { status: 500 }
-    )
+    return NextResponse.json({ success: false, error: message }, { status: 500 })
   }
 }

@@ -2845,8 +2845,7 @@ Key change: vault-context API is refactored to return **raw data only** — no `
 
 ```bash
 cd frontend
-npm install @langchain/langgraph @langchain/core @langchain/anthropic
-# Or @langchain/openai if using OpenAI
+npm install @langchain/langgraph @langchain/core @langchain/openai
 ```
 
 Also install PostgreSQL client for state persistence:
@@ -2944,11 +2943,11 @@ Keep: raw APY, gas prices, bridge fee estimates, balances
 The agent now decides. The API just provides facts.
 
 ### 15.6 Verification — Day 15
-- [ ] LangGraph dependencies installed
-- [ ] Agent graph compiles and runs with a test message
-- [ ] Tools defined and callable (get_yield_data returns real data)
-- [ ] System prompt embedded with strategy knowledge
-- [ ] vault-context API returns raw data only (no decisions)
+- [x] LangGraph dependencies installed
+- [x] Agent graph compiles and runs with a test message
+- [x] Tools defined and callable (get_yield_data returns real data)
+- [x] System prompt embedded with strategy knowledge
+- [x] vault-context API returns raw data only (no decisions)
 
 ---
 

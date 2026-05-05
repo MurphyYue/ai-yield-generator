@@ -2,46 +2,41 @@
 
 ## Purpose
 
-This document is the retrieval-oriented knowledge base policy for the Day 11 AI strategy advisor.
+This document is the knowledge base policy for the LangGraph AI strategy advisor (Days 15-19).
 
 Use it together with:
 
-- live data from the `vault-context` API
+- live data from the `vault-context` API (raw economics only)
 - the user's latest question
 - conversation context
 
-This document is not the source of live market truth.
-
-The source of truth for APY, costs, net advantage, and migration eligibility is the backend `vault-context` API.
+The `vault-context` API provides raw numbers: APY, gas costs, bridge fees, netAdvantageUsd, breakevenDays.
+**The AI agent makes all migration decisions.** The backend does not gate or recommend — it only computes.
 
 ---
 
 ## Quick Summary
 
-Use these rules as the highest-priority guidance.
-
 - Base is the default home chain.
-- Arbitrum is only an optimization destination.
+- Arbitrum is only an optimisation destination.
 - Mainnet advisory uses USDC.
-- The AI explains backend-computed facts. The AI does not invent facts.
+- The AI reasons over raw numbers from the vault-context API. The AI does not invent facts.
 - The AI must not imply that funds move automatically.
-- Return `cross_chain_migrate` only when backend migration gating passes.
-- If migration is marginal, negative, unknown, or blocked, recommend staying on Base.
+- Return `cross_chain_migrate` only when the agent's own calculation justifies it.
+- If migration economics are marginal, negative, or unknown, recommend staying on Base.
 
 ---
 
 ## Decision Priority
 
-When multiple signals exist, follow this order:
+When evaluating migration, the agent reasons in this order:
 
-1. `crossChain.shouldSuggestMigration`
-2. `crossChain.recommendation`
-3. `crossChain.netAdvantageUsd`
-4. `crossChain.reasonCodes`
-5. user request phrasing
-6. natural-language explanation style
-
-If the backend recommendation conflicts with a user request, follow the backend recommendation and explain why.
+1. `crossChain.netAdvantageUsd` — is the net gain after all costs > $1?
+2. `crossChain.principal` — is the amount >= 100 USDC?
+3. `crossChain.deltaApy` — is Arbitrum APY actually higher?
+4. `crossChain.breakevenDays` — is breakeven within the user's holding period?
+5. User request phrasing
+6. Natural-language explanation style
 
 ---
 
@@ -102,9 +97,7 @@ For current Base and Arbitrum mainnet advisory, use USDC language.
 
 ## Backend Source Of Truth
 
-Use the live `vault-context` API response as the source of truth for strategy reasoning.
-
-Important fields:
+The `vault-context` API returns raw market data. The agent uses these fields:
 
 - `base.supplyApy`
 - `base.estimatedTxCostUsd`
@@ -121,17 +114,11 @@ Important fields:
 - `crossChain.totalEstimatedCostUsd`
 - `crossChain.netAdvantageUsd`
 - `crossChain.breakevenDays`
-- `crossChain.shouldSuggestMigration`
-- `crossChain.recommendation`
-- `crossChain.reasonCodes`
-- `crossChain.summaryReason`
 - `vault.idleUsdc`
 - `vault.strategyUsdc`
 - `vault.userUsdc`
 
-The backend computes the economics.
-
-The AI explains the economics.
+The backend computes the economics. The agent decides what to recommend.
 
 ---
 
@@ -167,22 +154,15 @@ The estimated economic advantage after subtracting migration-related costs.
 
 The estimated number of days needed for extra yield to recover migration cost.
 
-### `crossChain.shouldSuggestMigration`
+### `crossChain.netAdvantageUsd`
 
-The backend's hard gate.
+The estimated economic advantage after subtracting all migration costs.
+The agent uses this as the primary migration gate: must be > $1 to justify migration.
 
-If this is `false`, the AI must not return `cross_chain_migrate`.
+### `crossChain.breakevenDays`
 
-### `crossChain.recommendation`
-
-The backend's recommendation summary.
-
-Expected values:
-
-- `migrate`
-- `stay`
-
----
+The estimated number of days needed for extra yield to recover migration cost.
+The agent compares this to the user's intended holding period.
 
 ## Single-Chain Aave Strategy Rules
 
@@ -261,19 +241,18 @@ If breakeven is longer than the user's intended holding period, the AI should ge
 
 ---
 
-## Strict Migration Gating
+## Strict Migration Gating (Agent Decides)
 
 ### Migration May Be Suggested Only When
 
-All of these are true:
+The agent calculates all of these from raw data:
 
-- `crossChain.shouldSuggestMigration = true`
-- `crossChain.recommendation = "migrate"`
-- `crossChain.netAdvantageUsd > 1`
-- principal is at least `100 USDC`
-- `crossChain.deltaApy > 0`
+- principal >= 100 USDC
+- deltaApy > 0 (Arbitrum APY is higher than Base)
+- netAdvantageUsd > 1 (net gain after ALL costs exceeds $1)
+- breakevenDays is within the user's intended holding period
 
-Only in this case may the AI return:
+Only in this case may the agent return:
 
 ```json
 "type": "cross_chain_migrate"
@@ -283,17 +262,11 @@ Only in this case may the AI return:
 
 If any of these are true, recommend staying on Base:
 
-- `crossChain.shouldSuggestMigration = false`
-- `crossChain.recommendation = "stay"`
-- `crossChain.netAdvantageUsd <= 1`
-- principal is below `100 USDC`
-- `crossChain.deltaApy <= 0`
-- breakeven is longer than the intended holding period
+- principal < 100 USDC
+- deltaApy <= 0
+- netAdvantageUsd <= 1
+- breakevenDays exceeds the intended holding period
 - market data is missing, stale, or unavailable
-
-In these cases, the AI must not return `cross_chain_migrate`.
-
-It should still explain the reason naturally.
 
 ### Small Principal Rule
 
@@ -307,32 +280,19 @@ Suggested explanation:
 
 ## Decision Table
 
-Use this table for retrieval and explanation.
-
-| Condition | Recommendation | Allowed action type |
+| Condition | Agent Recommendation | Allowed action type |
 | --- | --- | --- |
 | `principal <= 0` | Stay on Base | `check_yield` |
 | `principal < 100` | Stay on Base | `check_yield` |
 | `deltaApy <= 0` | Stay on Base | `check_yield` |
 | `netAdvantageUsd <= 1` | Stay on Base | `check_yield` |
-| `shouldSuggestMigration = false` | Stay on Base | `check_yield` |
-| `shouldSuggestMigration = true` and `recommendation = "migrate"` | Migration allowed | `cross_chain_migrate` |
+| All gates pass (principal ≥ 100, deltaApy > 0, netAdvantageUsd > 1) | Migration allowed | `cross_chain_migrate` |
 
 ---
 
 ## Reason Code Interpretation
 
-If the backend returns reason codes, interpret them like this:
-
-- `MIGRATION_PROFITABLE`: migration passed backend threshold
-- `NO_PRINCIPAL`: no usable principal was provided
-- `SMALL_PRINCIPAL`: amount is below minimum migration size
-- `NO_APY_ADVANTAGE`: Arbitrum does not currently beat Base
-- `NET_ADVANTAGE_NEGATIVE`: migration loses value after costs
-- `NET_ADVANTAGE_BELOW_THRESHOLD`: migration is positive but too small to justify bridge risk
-- `BRIDGE_RISK_NOT_JUSTIFIED`: bridge risk is not justified by expected return
-
-The AI should use these codes to explain the recommendation naturally, not just repeat the code names.
+The vault-context API no longer returns reason codes. The agent explains its reasoning in natural language based on the raw numbers it receives.
 
 ---
 
@@ -464,7 +424,7 @@ The AI should preserve multi-turn context when the user changes:
 
 - Never invent APY.
 - Never invent bridge cost, gas cost, slippage, net advantage, or breakeven.
-- Never recommend migration if backend says `shouldSuggestMigration = false`.
+- Never return `cross_chain_migrate` when netAdvantageUsd <= 1 or principal < 100
 - Never return `cross_chain_migrate` for negative or marginal net advantage.
 - Never ignore bridge risk.
 - Never imply that the AI can execute transactions.
