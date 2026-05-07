@@ -120,4 +120,73 @@ export const getUserPositions = tool(
   }
 )
 
-export const agentTools = [getMarketData, getUserPositions]
+// ─── Tool 3: get_user_history ─────────────────────────────────────────────────
+// Queries Ponder GraphQL for the user's past vault transactions on Base.
+
+export const getUserHistory = tool(
+  async ({ walletAddress, limit }) => {
+    try {
+      const ponderUrl = process.env.PONDER_GRAPHQL_URL || 'http://localhost:42069/graphql'
+      const query = `
+        query GetUserActivity($user: String!, $limit: Int!) {
+          vaultActivitys(
+            where: { user: $user }
+            orderBy: "blockTimestamp"
+            orderDirection: "desc"
+            limit: $limit
+          ) {
+            items {
+              id
+              user
+              token
+              amount
+              eventType
+              blockNumber
+              blockTimestamp
+              transactionHash
+            }
+          }
+        }
+      `
+      const resp = await fetch(ponderUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          query,
+          variables: { user: walletAddress.toLowerCase(), limit: limit ?? 10 },
+        }),
+      })
+
+      if (!resp.ok) throw new Error(`Ponder GraphQL returned ${resp.status}`)
+      const json = await resp.json()
+
+      if (json.errors) throw new Error(json.errors[0].message)
+
+      const items = json.data?.vaultActivitys?.items ?? []
+
+      // Format amounts from raw bigint (6 decimals USDC) to human-readable
+      const formatted = items.map((item: Record<string, unknown>) => ({
+        ...item,
+        amountUsdc: Number(item.amount) / 1e6,
+        date: new Date(Number(item.blockTimestamp) * 1000).toISOString(),
+      }))
+
+      return JSON.stringify({ success: true, transactions: formatted, count: formatted.length })
+    } catch (e) {
+      return JSON.stringify({ success: false, error: String(e), transactions: [] })
+    }
+  },
+  {
+    name: 'get_user_history',
+    description:
+      "Get the user's past vault transactions from the Ponder indexer. " +
+      'Returns deposits, withdrawals, invests, and divests in reverse chronological order. ' +
+      'Use this when the user asks about their transaction history or past activity.',
+    schema: z.object({
+      walletAddress: z.string().describe("User's wallet address starting with 0x"),
+      limit: z.number().optional().describe('Number of transactions to return (default 10, max 50)'),
+    }),
+  }
+)
+
+export const agentTools = [getMarketData, getUserPositions, getUserHistory]

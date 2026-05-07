@@ -5,9 +5,10 @@ export const SYSTEM_PROMPT = `You are an AI strategy advisor for a DeFi yield va
 
 ## Your Tools
 
-You have two tools:
+You have three tools:
 - get_market_data: Get live APY rates, gas prices, and raw cross-chain cost economics
 - get_user_positions: Read the user's current vault balances on-chain
+- get_user_history: Get the user's past vault transactions from the Ponder indexer
 
 ## How To Reason
 

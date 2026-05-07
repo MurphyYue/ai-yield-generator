@@ -10,6 +10,7 @@ import { AIPanel } from './AIPanel'
 import { AdminPanel } from './AdminPanel'
 import { SystemPausedBanner } from './SystemPausedBanner'
 import { ThemeToggle } from './ThemeToggle'
+import { TransactionHistory } from './TransactionHistory'
 import { AIIntent, isLegacyIntent } from '@/lib/ai-intent'
 import { useVault } from '@/hooks/useVault'
 
@@ -101,13 +102,14 @@ export function VaultDashboard() {
         {/* ��─ Two-column layout: main + sidebar ── */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 340px', gap: '1.25rem', alignItems: 'start' }}>
 
-          {/* ── Left: AI + Deposit/Withdraw ── */}
+          {/* ── Left: AI + Deposit/Withdraw + Transaction History ── */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
             <AIPanel onIntentParsed={handleIntentParsed} />
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.25rem' }}>
               <DepositPanel intent={formIntent} />
               <WithdrawPanel intent={formIntent} />
             </div>
+            <TransactionHistory />
           </div>
 
           {/* ── Right: Admin panel sidebar ── */}
