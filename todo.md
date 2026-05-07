@@ -3039,11 +3039,11 @@ Simple table/list showing user's past transactions:
 Add TransactionHistory to the layout.
 
 ### 16.7 Verification — Day 16
-- [ ] Ponder running against Base mainnet (indexing real events)
-- [ ] All 4 event types indexed (deposit, withdraw, invest, divest)
-- [ ] Agent's get_user_history tool returns real transaction data
-- [ ] TransactionHistory component renders user's past transactions
-- [ ] GraphQL query at localhost:42069 returns correct data
+- [x] Ponder running against Base mainnet (indexing real events)
+- [x] All 4 event types indexed (deposit, withdraw, invest, divest)
+- [x] Agent's get_user_history tool returns real transaction data
+- [x] TransactionHistory component renders user's past transactions
+- [x] GraphQL query at localhost:42069 returns correct data
 
 ---
 
