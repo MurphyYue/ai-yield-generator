@@ -1,11 +1,12 @@
 import { StateGraph, START, END } from '@langchain/langgraph'
 import { ToolNode } from '@langchain/langgraph/prebuilt'
 import { ChatOpenAI } from '@langchain/openai'
-import { AIMessage, SystemMessage } from '@langchain/core/messages'
+import { AIMessage, HumanMessage, SystemMessage } from '@langchain/core/messages'
 import { PostgresSaver } from '@langchain/langgraph-checkpoint-postgres'
 import { AgentState, AgentStateType } from './state'
 import { agentTools } from './tools'
 import { SYSTEM_PROMPT } from './prompts'
+import { setupTables } from './db'
 import type { AIIntent, StrategyIntent } from '@/lib/ai-intent'
 
 // ─── LLM ──────────────────────────────────────────────────────────────────────
@@ -21,7 +22,65 @@ const llm = new ChatOpenAI({
 
 // ─── Nodes ────────────────────────────────────────────────────────────────────
 
-// ReAct agent: LLM decides which tools to call or produces final answer
+// checkAlerts: runs first on every conversation turn.
+// Fetches live APY and checks stored alerts before the user's question is answered.
+// If alerts are triggered, injects a warning message so the agent surfaces it.
+async function checkAlerts(state: AgentStateType): Promise<Partial<AgentStateType>> {
+  if (!state.userId) return {}
+
+  try {
+    // Fetch current APY from vault-context to evaluate alert thresholds
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
+    const resp = await fetch(`${appUrl}/api/vault-context`)
+    if (!resp.ok) return {}
+
+    const json = await resp.json()
+    if (!json.success) return {}
+
+    const baseApy: number = json.data.base.supplyApy
+    const arbitrumApy: number = json.data.arbitrum.supplyApy
+
+    // Store vaultContext in state so agent node can reuse it without a second fetch
+    const vaultContext = json.data
+
+    // Check alerts via DB directly (not as a tool call — this runs before the LLM)
+    const { getDb } = await import('./db')
+    const db = getDb()
+    const result = await db.query(
+      `SELECT * FROM alerts WHERE user_address = $1 AND active = TRUE`,
+      [state.userId.toLowerCase()]
+    )
+
+    const triggered = result.rows.filter((alert) => {
+      if (alert.alert_type === 'apy_threshold') {
+        const current = alert.chain === 'base' ? baseApy : arbitrumApy
+        return current < alert.threshold
+      }
+      return false
+    })
+
+    if (triggered.length === 0) {
+      return { vaultContext }
+    }
+
+    // Inject alert warnings as a system message so the agent surfaces them first
+    const warnings = triggered
+      .map((a) => `⚠️ ALERT TRIGGERED: ${a.chain} APY (${a.chain === 'base' ? baseApy.toFixed(2) : arbitrumApy.toFixed(2)}%) dropped below your ${a.threshold}% threshold.`)
+      .join('\n')
+
+    const alertMessage = new HumanMessage(`[SYSTEM ALERT]\n${warnings}`)
+
+    return {
+      vaultContext,
+      alerts: triggered,
+      messages: [alertMessage],
+    }
+  } catch {
+    return {}
+  }
+}
+
+// runAgent: LLM decides which tools to call or produces final answer
 async function runAgent(state: AgentStateType) {
   const response = await llm.invoke([
     new SystemMessage(SYSTEM_PROMPT),
@@ -30,14 +89,12 @@ async function runAgent(state: AgentStateType) {
   return { messages: [response] }
 }
 
-// Parse the final AI text response into a structured AIIntent
-// The LLM is instructed to return JSON — extract and validate it here
+// formatIntent: parses the LLM's final JSON output into a typed AIIntent
 async function formatIntent(state: AgentStateType): Promise<Partial<AgentStateType>> {
   const last = state.messages[state.messages.length - 1] as AIMessage
   const content = typeof last.content === 'string' ? last.content : ''
 
   try {
-    // Strip markdown code fences if present
     const cleaned = content
       .replace(/^```(?:json)?\s*/im, '')
       .replace(/```\s*$/im, '')
@@ -46,12 +103,8 @@ async function formatIntent(state: AgentStateType): Promise<Partial<AgentStateTy
     const parsed = JSON.parse(cleaned) as StrategyIntent
     const requiresApproval = parsed.action_data?.type === 'cross_chain_migrate'
 
-    return {
-      intent: parsed as AIIntent,
-      requiresApproval,
-    }
+    return { intent: parsed as AIIntent, requiresApproval }
   } catch {
-    // Parsing failed — return a safe fallback intent
     const fallback: StrategyIntent = {
       action: 'unknown',
       strategy_logic: content || 'I was unable to parse a structured response. Please try again.',
@@ -71,7 +124,6 @@ async function formatIntent(state: AgentStateType): Promise<Partial<AgentStateTy
 
 // ─── Routing ──────────────────────────────────────────────────────────────────
 
-// After agent runs: continue tool loop or move to format response
 function shouldContinue(state: AgentStateType): string {
   const last = state.messages[state.messages.length - 1] as AIMessage
   if (last.tool_calls && last.tool_calls.length > 0) {
@@ -85,10 +137,12 @@ function shouldContinue(state: AgentStateType): string {
 const toolNode = new ToolNode(agentTools)
 
 const workflow = new StateGraph(AgentState)
+  .addNode('checkAlerts', checkAlerts)
   .addNode('agent', runAgent)
   .addNode('tools', toolNode)
   .addNode('formatIntent', formatIntent)
-  .addEdge(START, 'agent')
+  .addEdge(START, 'checkAlerts')       // always check alerts first
+  .addEdge('checkAlerts', 'agent')
   .addConditionalEdges('agent', shouldContinue, {
     tools: 'tools',
     formatIntent: 'formatIntent',
@@ -98,7 +152,6 @@ const workflow = new StateGraph(AgentState)
 
 // ─── Singleton ────────────────────────────────────────────────────────────────
 
-// Keep one compiled agent per process — avoid re-initialising checkpointer on every request
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let agentInstance: any = null
 
@@ -107,8 +160,8 @@ async function buildAgent() {
   if (!connectionString) throw new Error('DATABASE_URL is not set')
 
   const checkpointer = PostgresSaver.fromConnString(connectionString)
-  // Creates LangGraph's internal checkpoint tables if they don't exist
-  await checkpointer.setup()
+  await checkpointer.setup()   // creates LangGraph checkpoint tables
+  await setupTables()          // creates alerts + conversations tables
 
   return workflow.compile({ checkpointer })
 }

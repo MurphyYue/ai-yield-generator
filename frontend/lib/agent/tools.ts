@@ -1,3 +1,5 @@
+import { getDb } from './db'
+import { randomUUID } from 'crypto'
 import { tool } from '@langchain/core/tools'
 import { z } from 'zod'
 import { createPublicClient, http } from 'viem'
@@ -189,4 +191,101 @@ export const getUserHistory = tool(
   }
 )
 
-export const agentTools = [getMarketData, getUserPositions, getUserHistory]
+// ─── Tool 4: set_alert ────────────────────────────────────────────────────────
+// Stores a monitoring alert in PostgreSQL for this user.
+
+export const setAlert = tool(
+  async ({ walletAddress, alertType, chain, threshold }) => {
+    try {
+      const db = getDb()
+      const id = randomUUID()
+      await db.query(
+        `INSERT INTO alerts (id, user_address, alert_type, chain, threshold)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [id, walletAddress.toLowerCase(), alertType, chain, threshold ?? null]
+      )
+      return JSON.stringify({ success: true, alertId: id, message: `Alert set: ${alertType} on ${chain}` })
+    } catch (e) {
+      return JSON.stringify({ success: false, error: String(e) })
+    }
+  },
+  {
+    name: 'set_alert',
+    description:
+      'Store a monitoring alert for the user. ' +
+      'Use this when the user says things like "alert me if Base APY drops below 3%" or "notify me when yield changes". ' +
+      'The alert will be checked at the start of every future conversation.',
+    schema: z.object({
+      walletAddress: z.string().describe("User's wallet address"),
+      alertType: z.enum(['apy_threshold']).describe('Type of alert — currently only apy_threshold is supported'),
+      chain: z.enum(['base', 'arbitrum']).describe('Which chain to monitor'),
+      threshold: z.number().describe('APY percentage threshold — alert triggers when APY drops below this value'),
+    }),
+  }
+)
+
+// ─── Tool 5: get_alerts ───────────────────────────────────────────────────────
+// Reads active alerts for this user and checks if any are triggered.
+// Called by the checkAlerts node at the start of every conversation.
+
+export const getAlerts = tool(
+  async ({ walletAddress, currentBaseApy, currentArbitrumApy }) => {
+    try {
+      const db = getDb()
+      const result = await db.query(
+        `SELECT * FROM alerts WHERE user_address = $1 AND active = TRUE ORDER BY created_at DESC`,
+        [walletAddress.toLowerCase()]
+      )
+
+      const alerts = result.rows
+      if (alerts.length === 0) {
+        return JSON.stringify({ success: true, alerts: [], triggered: [] })
+      }
+
+      // Check which alerts are triggered against current APY values
+      const triggered = alerts.filter((alert) => {
+        if (alert.alert_type === 'apy_threshold') {
+          const currentApy = alert.chain === 'base' ? currentBaseApy : currentArbitrumApy
+          return currentApy !== undefined && currentApy < alert.threshold
+        }
+        return false
+      })
+
+      // Mark triggered alerts in DB
+      for (const alert of triggered) {
+        await db.query(
+          `UPDATE alerts SET triggered_at = NOW() WHERE id = $1`,
+          [alert.id]
+        )
+      }
+
+      return JSON.stringify({
+        success: true,
+        alerts: alerts.length,
+        triggered: triggered.map((a) => ({
+          id: a.id,
+          alertType: a.alert_type,
+          chain: a.chain,
+          threshold: a.threshold,
+          message: `⚠️ ${a.chain.charAt(0).toUpperCase() + a.chain.slice(1)} APY has dropped below your ${a.threshold}% threshold.`,
+        })),
+      })
+    } catch (e) {
+      return JSON.stringify({ success: false, error: String(e), triggered: [] })
+    }
+  },
+  {
+    name: 'get_alerts',
+    description:
+      "Check the user's active monitoring alerts and whether any are currently triggered. " +
+      'Pass the current APY values so triggered alerts can be identified. ' +
+      'Always call this at the start of a conversation before answering the user.',
+    schema: z.object({
+      walletAddress: z.string().describe("User's wallet address"),
+      currentBaseApy: z.number().optional().describe('Current Base Aave USDC supply APY'),
+      currentArbitrumApy: z.number().optional().describe('Current Arbitrum Aave USDC supply APY'),
+    }),
+  }
+)
+
+export const agentTools = [getMarketData, getUserPositions, getUserHistory, setAlert, getAlerts]
