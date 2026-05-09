@@ -82,8 +82,12 @@ async function checkAlerts(state: AgentStateType): Promise<Partial<AgentStateTyp
 
 // runAgent: LLM decides which tools to call or produces final answer
 async function runAgent(state: AgentStateType) {
+  const userContext = state.userId
+    ? `\n\n## User Context\nThe current user's wallet address is: ${state.userId}\nWhen calling tools that need a wallet address (get_user_positions, get_user_history, set_alert, get_alerts), use this exact address.`
+    : ''
+
   const response = await llm.invoke([
-    new SystemMessage(SYSTEM_PROMPT),
+    new SystemMessage(SYSTEM_PROMPT + userContext),
     ...state.messages,
   ])
   return { messages: [response] }

@@ -18,6 +18,7 @@ export function AIPanel({ onIntentParsed }: AIPanelProps) {
   const [message, setMessage] = useState('')
   const [conversationId, setConversationId] = useState('')
   const [isLoading, setIsLoading] = useState(false)
+  const [progressMessage, setProgressMessage] = useState<string | null>(null)
   const [intent, setIntent] = useState<AIIntent | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [riskConfirmed, setRiskConfirmed] = useState(false)
@@ -44,6 +45,7 @@ export function AIPanel({ onIntentParsed }: AIPanelProps) {
 
     setIsLoading(true)
     setError(null)
+    setProgressMessage('Connecting to advisor...')
     setRiskConfirmed(false)
     setShowMigrationRiskModal(false)
     setMigrationRiskAccepted(false)
@@ -51,10 +53,10 @@ export function AIPanel({ onIntentParsed }: AIPanelProps) {
     setBridgeCompleted(false)
 
     try {
-      const response = await fetch('/api/chat', {
+      const response = await fetch('/api/chat/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+        body: JSON.stringify({
           message: rawMessage,
           user_id: address,
           conversation_id: conversationId,
@@ -70,19 +72,67 @@ export function AIPanel({ onIntentParsed }: AIPanelProps) {
         }),
       })
 
-      const data = await response.json()
-
-      if (!data.success || !data.intent) {
-        setError(data.error || 'Failed to process intent')
+      if (!response.ok || !response.body) {
+        setError('Failed to connect to advisor.')
         return
       }
 
-      const parsedIntent = data.intent as AIIntent
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+      let parsedIntent: AIIntent | null = null
+      let streamConversationId = ''
+      let streamError: string | null = null
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+
+        buffer += decoder.decode(value, { stream: true })
+
+        // SSE events are separated by blank lines
+        const events = buffer.split('\n\n')
+        buffer = events.pop() ?? ''
+
+        for (const block of events) {
+          const dataLine = block.split('\n').find((line) => line.startsWith('data: '))
+          if (!dataLine) continue
+          try {
+            const event = JSON.parse(dataLine.slice(6))
+            if (event.type === 'init') {
+              streamConversationId = event.conversation_id
+            } else if (event.type === 'progress') {
+              setProgressMessage(event.message)
+            } else if (event.type === 'intent') {
+              parsedIntent = event.intent
+              streamConversationId = event.conversation_id
+            } else if (event.type === 'error') {
+              streamError = event.message
+            }
+          } catch {
+            // skip malformed event
+          }
+        }
+      }
+
+      if (streamError) {
+        setError(streamError)
+        return
+      }
+
+      if (!parsedIntent) {
+        setError('No response from advisor.')
+        return
+      }
+
       setIntent(parsedIntent)
-      if (data.conversation_id) setConversationId(data.conversation_id)
+      if (streamConversationId) setConversationId(streamConversationId)
 
       if (isStrategyIntent(parsedIntent)) {
-        if (parsedIntent.action === 'unknown' || parsedIntent.confidence === 'low') {
+        // Only treat as error when the agent failed to produce any reasoning text.
+        // action="unknown" with strategy_logic is a valid informational response.
+        const hasReasoning = parsedIntent.strategy_logic && parsedIntent.strategy_logic.length > 20
+        if (!hasReasoning && (parsedIntent.action === 'unknown' || parsedIntent.confidence === 'low')) {
           setError('The advisor needs a clearer question. Try "should I invest?" or "invest 500 USDT".')
         }
         onIntentParsed?.(parsedIntent)
@@ -99,6 +149,7 @@ export function AIPanel({ onIntentParsed }: AIPanelProps) {
       setError('Network error. Please try again.')
     } finally {
       setIsLoading(false)
+      setProgressMessage(null)
     }
   }
 
@@ -185,7 +236,7 @@ export function AIPanel({ onIntentParsed }: AIPanelProps) {
           border: '1px solid var(--cyan-glow)',
           padding: '3px 8px', borderRadius: 4,
         }}>
-          AI ∙ DIFY
+          AI ∙ Assistant
         </div>
       </div>
 
@@ -212,6 +263,20 @@ export function AIPanel({ onIntentParsed }: AIPanelProps) {
       {!isConnected && (
         <div className="alert-amber" style={{ marginTop: 10 }}>
           Connect wallet to use AI advisor.
+        </div>
+      )}
+
+      {isLoading && progressMessage && (
+        <div style={{
+          marginTop: 10,
+          fontSize: '0.8rem',
+          color: 'var(--text-2)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '0.5rem',
+        }}>
+          <span style={{ color: 'var(--cyan)' }}>•</span>
+          {progressMessage}
         </div>
       )}
 
