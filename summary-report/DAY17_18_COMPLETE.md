@@ -26,10 +26,10 @@ AFTER Day 17 + 18:
 │   ┌─────────────────────────────────────────────────────────────────┐  │
 │   │ checkAlerts (NEW)                                               │  │
 │   │   - Fetch live APY from /api/vault-context                      │  │
-│   │   - Query alerts table for this user                            │  │
+│   │   - Query armed alerts (active=TRUE AND triggered_at IS NULL)   │  │
 │   │   - Compare current APY vs stored thresholds                    │  │
 │   │   - Inject [SYSTEM ALERT] message if any alert triggered        │  │
-│   │   - Mark triggered alerts in DB (triggered_at = NOW())          │  │
+│   │   - Consume fired alerts: triggered_at=NOW(), active=FALSE      │  │
 │   └────────────────────────────┬────────────────────────────────────┘  │
 │                                ▼                                         │
 │   ┌─────────────────────────────────────────────────────────────────┐  │
@@ -120,18 +120,22 @@ CREATE TABLE alerts (
 CREATE INDEX idx_alerts_user ON alerts(user_address, active)
 ```
 
-The `active` flag and `triggered_at` timestamp let the agent track which alerts have already fired without losing the historical record.
+The `active` flag and `triggered_at` timestamp form a tiny state machine: `(active=TRUE, triggered_at=NULL)` means "armed", `(active=FALSE, triggered_at=<ts>)` means "fired and consumed". Each alert fires exactly once.
 
 **Two new tools (`tools.ts`):**
 
 ```typescript
 set_alert({ walletAddress, alertType, chain, threshold })
-get_alerts({ walletAddress, currentBaseApy, currentArbitrumApy })
+get_alerts({ walletAddress, currentBaseApy, currentArbitrumApy })  // read-only
 ```
 
 **checkAlerts node (`graph.ts`):**
 
-The graph's first node fetches live APY, queries the user's active alerts, and injects a `[SYSTEM ALERT]` HumanMessage if any threshold is crossed. The system prompt instructs the LLM to surface these alerts before answering the user's actual question.
+The graph's first node is the canonical alert-firing path. It fetches live APY, queries only armed alerts (`active = TRUE AND triggered_at IS NULL`), injects a `[SYSTEM ALERT]` HumanMessage if any threshold is crossed, then atomically consumes the fired rows in a single batch UPDATE (`triggered_at = NOW(), active = FALSE`). The system prompt instructs the LLM to surface these alerts before answering the user's actual question.
+
+**Why one-shot semantics**: re-warning the user every turn while APY stays below threshold is spammy. By consuming fired rows, the alert becomes a single, deliberate notification — exactly what production monitoring products do. The user can re-arm by calling `set_alert` again.
+
+**Why the tool is read-only**: state mutation lives in one place (the node). The `get_alerts` tool exists for LLM-driven queries like "show me my alerts", but it does not write — that would create two parallel mutation paths and risk double-firing.
 
 **Key insight**: The `checkAlerts` node runs even when the user asked something unrelated. If your APY threshold is breached and you ask "show my history", the agent warns you about the breach first, then answers your history question. This is what "proactive" means architecturally.
 
@@ -203,6 +207,7 @@ while (true) {
 | LangGraph state Annotation type errors with non-message fields | All annotated fields require an explicit `reducer` function — defaults alone are insufficient | Added `reducer: (_, b) => b` (last-write-wins) for `userId`, `vaultContext`, `userPositions`, `userHistory`, `alerts`, `intent`, `requiresApproval` | LangGraph state is not a plain object. Every field declares its own merge strategy. |
 | Multi-turn memory needed verification across server restarts | Initial test only proved single-turn responses worked | Asked follow-up question with same `conversation_id`, observed agent reused context and applied current APY (not stale) | Conversation persistence is verified by the agent applying current data while remembering prior context — not just by data being in the DB. |
 | 5+ Dify env vars referenced across the codebase | Removing them risked breaking unused-but-referenced config paths | Deferred env cleanup to Day 19 polish; code paths already removed | Distinguish between "code is gone" and "config is clean" — both matter, but at different times. |
+| `triggered_at` was dead data — written but never read | Two parallel code paths queried alerts (`checkAlerts` node + `get_alerts` tool); only the tool wrote `triggered_at`, neither query filtered on it, so alerts re-fired every turn | Made `checkAlerts` the canonical mutation path: query `WHERE active = TRUE AND triggered_at IS NULL`, then batch-update `triggered_at = NOW(), active = FALSE` after firing. Demoted `get_alerts` tool to read-only. | "Write-only fields" are a classic stale-code smell — code that writes data nothing reads is worse than no code, because it implies an intent that isn't realised. State mutation should live in exactly one place. |
 
 ---
 
@@ -283,6 +288,12 @@ while (true) {
 **What**: An agent returning `action: 'unknown'` is not the same as a parser failure.
 **Why**: Modern LLMs deliberately classify informational questions as having no actionable intent. Treating that as a parsing error frustrates users.
 **How**: Only show "unclear question" UI when both action is unknown AND `strategy_logic` is empty/short.
+
+### 6. Alerts as One-Shot Consumable Rows
+
+**What**: An alert is a tiny state machine over two columns: `(active=TRUE, triggered_at=NULL)` is armed, `(active=FALSE, triggered_at=<ts>)` is fired and consumed.
+**Why**: Re-warning the user every turn while APY stays below threshold is spammy and indistinguishable from a bug. Production notification systems fire each alert exactly once.
+**How**: One canonical mutation path (`checkAlerts` node) queries armed alerts and atomically consumes fired ones in a batch UPDATE. The `get_alerts` tool is read-only — state mutation never happens in two places.
 
 ---
 

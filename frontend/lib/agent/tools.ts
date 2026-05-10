@@ -242,7 +242,9 @@ export const getAlerts = tool(
         return JSON.stringify({ success: true, alerts: [], triggered: [] })
       }
 
-      // Check which alerts are triggered against current APY values
+      // Check which alerts are triggered against current APY values.
+      // Note: triggered alerts are marked + consumed in checkAlerts (graph.ts), not here.
+      // This tool is read-only — it reports the user's currently armed alerts.
       const triggered = alerts.filter((alert) => {
         if (alert.alert_type === 'apy_threshold') {
           const currentApy = alert.chain === 'base' ? currentBaseApy : currentArbitrumApy
@@ -250,14 +252,6 @@ export const getAlerts = tool(
         }
         return false
       })
-
-      // Mark triggered alerts in DB
-      for (const alert of triggered) {
-        await db.query(
-          `UPDATE alerts SET triggered_at = NOW() WHERE id = $1`,
-          [alert.id]
-        )
-      }
 
       return JSON.stringify({
         success: true,

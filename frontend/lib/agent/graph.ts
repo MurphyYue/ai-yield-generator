@@ -46,8 +46,10 @@ async function checkAlerts(state: AgentStateType): Promise<Partial<AgentStateTyp
     // Check alerts via DB directly (not as a tool call — this runs before the LLM)
     const { getDb } = await import('./db')
     const db = getDb()
+    // Only consider alerts that are armed (active) and have not fired yet (triggered_at IS NULL).
+    // Once fired, alerts are auto-consumed so the user is not warned twice for the same breach.
     const result = await db.query(
-      `SELECT * FROM alerts WHERE user_address = $1 AND active = TRUE`,
+      `SELECT * FROM alerts WHERE user_address = $1 AND active = TRUE AND triggered_at IS NULL`,
       [state.userId.toLowerCase()]
     )
 
@@ -62,6 +64,12 @@ async function checkAlerts(state: AgentStateType): Promise<Partial<AgentStateTyp
     if (triggered.length === 0) {
       return { vaultContext }
     }
+
+    // Mark fired alerts as consumed so we don't re-warn on subsequent turns.
+    await db.query(
+      `UPDATE alerts SET triggered_at = NOW(), active = FALSE WHERE id = ANY($1::text[])`,
+      [triggered.map((a) => a.id)]
+    )
 
     // Inject alert warnings as a system message so the agent surfaces them first
     const warnings = triggered
