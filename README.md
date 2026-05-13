@@ -32,7 +32,7 @@ CONTRACT LAYER:
 └──────────────────────┘         └──────────────────────┘
 
 ## Tech Stack
-Solidity, Foundry, Next.js, wagmi/viem, Dify AI, LI.FI, Base, Arbitrum
+Solidity, Foundry, Next.js, wagmi/viem, LangGraph, Ponder, LI.FI, Base, Arbitrum
 
 ## Engineering Process
 "Followed 5-level DeFi workflow: unit tests → mainnet fork testing → canary deployment..."
