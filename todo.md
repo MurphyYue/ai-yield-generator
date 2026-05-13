@@ -3298,3 +3298,736 @@ Built with LangGraph (TypeScript) — not a chatbot wrapper.
 
 ---
 
+# Days 20-22: LangGraph Enterprise Redesign — Store, Subgraphs, HITL, Parallel Prep
+
+## Context
+
+**Problem**: The current LangGraph agent (built Days 15-19) works but does not match the official LangGraph enterprise pattern. It uses `PostgresSaver` for short-term memory, but has no long-term memory `Store`, no semantic search across user history, no real human-in-the-loop interrupt (just a `requiresApproval` boolean flag), no parallel prep, no subgraphs, and no token streaming. The graph is a single monolithic tool loop.
+
+**Goal**: Redesign the agent following the official LangGraph docs (`add-memory`, `persistence`, `interrupts`, `use-subgraphs`, `workflows-agents`, `streaming`) so it demonstrates every primitive — linear flow, branching, parallel execution, loops, subgraphs, and HITL — exactly once where each earns its keep. Preserve all existing user-facing behaviour (market advisory, alert system, cross-chain migration).
+
+**What makes this enterprise-grade**:
+1. Long-term memory via `PostgresStore` with `pgvector` semantic search — agent remembers users across threads
+2. Per-turn parallel prep (market fetch + memory load + alert check) instead of sequential
+3. Router classifies intent and dispatches to specialised subgraphs
+4. Real `interrupt()` for migration approval — graph genuinely pauses, survives restarts
+5. Multi-mode streaming (`updates` + `messages` + `custom`) for token-by-token output
+6. Hot-path memory consolidation — docs' default for "most applications"
+
+**Out of scope**: Authentication (still trusts `user_id` in request body — separate concern). Background cron consolidation (deferred until traffic justifies it; cron interval must match lookback window per docs). Supabase migration (plain Postgres + `pgvector` is sufficient; `PostgresStore` uses its own schema).
+
+---
+
+## Architecture: Linear → Parallel + Router + Subgraphs + HITL
+
+```
+BEFORE (Days 15-19):
+  START → checkAlerts → agent ⇄ tools → formatIntent → END
+  Memory: PostgresSaver (short-term only). HITL: boolean flag, no real pause.
+
+AFTER (Days 20-22):
+  START                                  ← parent graph
+   ├── fetchMarket ──┐
+   ├── loadMemory  ──┼─→ router          ← parallel fan-out, then converge
+   └── checkAlerts ──┘     │
+                           ├─→ yieldSubgraph ─────────┐
+                           ├─→ migrationSubgraph ────┤  ← branching (4 specialists)
+                           ├─→ alertSubgraph ────────┤
+                           └─→ knowledgeSubgraph ────┤
+                                                      ↓
+                                       consolidateMemory ← hot-path memory write
+                                                      ↓
+                                                     END
+
+  Inside yield/migration/alert subgraphs: agent ⇄ tools (ReAct loop)
+  Inside migrationSubgraph, before END:
+    approvalGate calls interrupt() → graph pauses → UI risk modal →
+      POST /api/chat/resume with Command({ resume: true|false }) → graph completes
+
+  Memory:
+    Short-term:  PostgresSaver  (per-thread checkpoints)         ← unchanged
+    Long-term:   PostgresStore  ([userAddress, 'profile'])        ← NEW
+    Embeddings:  text-embedding-3-small (1536 dims) via pgvector  ← NEW
+```
+
+Patterns demonstrated: linear ✓ branching ✓ parallel ✓ loops ✓ subgraphs ✓ HITL ✓ streaming ✓
+
+---
+
+## Decisions Locked
+
+| Dimension | Choice | Rationale |
+|---|---|---|
+| Short-term memory | `PostgresSaver` (unchanged) | Already working, survives restarts |
+| Long-term memory | `PostgresStore` from `@langchain/langgraph-checkpoint-postgres/store` | Official Store interface, no custom table needed |
+| Vector search | `pgvector` + `OpenAIEmbeddings('text-embedding-3-small')`, dims 1536 | Official pattern from `add-memory.mdx` |
+| Memory timing | Hot-path extraction node only | Docs' recommended default: *"For most applications, the hot path is sufficient."* Background cron deferred. |
+| HITL scope | Migration approval only, via `interrupt()` | Minimal friction, maximum safety story |
+| Topology | Parallel prep → router → 4 subgraphs → consolidate | Demonstrates every LangGraph primitive |
+| Streaming | `streamMode: ['updates','messages','custom']` with `subgraphs: true` | Token streaming + progress + custom events |
+| Database | Plain Docker Postgres + `pgvector` extension | Supabase adds nothing here |
+
+---
+
+## Day 20: Long-term memory infrastructure + state expansion
+
+Day 20 is purely additive: it wires up `PostgresStore`, enables `pgvector`, and expands the state schema. The existing graph still runs unchanged at end of day. Lower risk, foundation for Days 21-22.
+
+### 20.1 Enable pgvector extension and verify dependencies
+
+**File**: `frontend/lib/agent/db.ts` (MODIFY)
+
+Add `CREATE EXTENSION` to existing `setupTables()`. Must run before any `PostgresStore.setup()` call:
+
+```typescript
+export async function setupTables(): Promise<void> {
+  const db = getDb()
+  await db.query(`
+    CREATE EXTENSION IF NOT EXISTS vector;
+
+    CREATE TABLE IF NOT EXISTS alerts (...);     -- existing
+    CREATE TABLE IF NOT EXISTS conversations (...); -- existing (unused, leave as-is)
+
+    CREATE INDEX IF NOT EXISTS idx_alerts_user ON alerts(user_address, active);
+    CREATE INDEX IF NOT EXISTS idx_conversations_user ON conversations(user_address);
+  `)
+}
+```
+
+Manual one-time sanity check via shell:
+```bash
+docker exec vault-postgres psql -U vault -d vault -c "CREATE EXTENSION IF NOT EXISTS vector"
+```
+
+Confirm `@langchain/langgraph-checkpoint-postgres@1.0.1` exposes `PostgresStore` at the `/store` subpath:
+```typescript
+import { PostgresStore } from '@langchain/langgraph-checkpoint-postgres/store'
+```
+
+### 20.2 Create PostgresStore singleton
+
+**File**: `frontend/lib/agent/memory.ts` (NEW)
+
+```typescript
+import { PostgresStore } from '@langchain/langgraph-checkpoint-postgres/store'
+import { OpenAIEmbeddings } from '@langchain/openai'
+
+export interface MemoryFact {
+  key: string
+  value: string
+  category: 'preference' | 'behavior' | 'decision'
+  confidence: number
+  updatedAt: string
+}
+
+let storeInstance: PostgresStore | null = null
+
+export async function getStore(): Promise<PostgresStore> {
+  if (!storeInstance) {
+    const embeddings = new OpenAIEmbeddings({
+      model: 'text-embedding-3-small',
+      apiKey: process.env.OPENAI_API_KEY,
+      configuration: { baseURL: process.env.OPENAI_API_BASE_URL },
+    })
+    storeInstance = PostgresStore.fromConnString(process.env.DATABASE_URL!, {
+      index: { embeddings, dims: 1536 },
+    })
+    await storeInstance.setup()  // creates store tables + pgvector index
+  }
+  return storeInstance
+}
+```
+
+### 20.3 Wire Store into agent boot
+
+**File**: `frontend/lib/agent/graph.ts` (MODIFY)
+
+In `buildAgent()`, fetch the store and pass it to `compile()`. No node reads it yet — wiring only:
+
+```typescript
+async function buildAgent() {
+  const checkpointer = PostgresSaver.fromConnString(process.env.DATABASE_URL!)
+  await checkpointer.setup()
+  await setupTables()
+  const store = await getStore()  // NEW
+
+  return workflow.compile({ checkpointer, store })  // pass both
+}
+```
+
+### 20.4 Expand AgentState schema
+
+**File**: `frontend/lib/agent/state.ts` (MODIFY)
+
+Add channels for parallel prep results, router output, and approval status. Remove dead channels:
+
+```typescript
+import type { MemoryFact } from './memory'
+
+export const AgentState = Annotation.Root({
+  messages: Annotation<BaseMessage[]>({ reducer: messagesStateReducer, default: () => [] }),
+  userId: Annotation<string>({ reducer: (_, b) => b, default: () => '' }),
+
+  // Set by parallel prep nodes (Day 21)
+  vaultContext: Annotation<any | null>({ reducer: (_, b) => b, default: () => null }),
+  relevantMemories: Annotation<MemoryFact[]>({ reducer: (_, b) => b, default: () => [] }),
+  triggeredAlerts: Annotation<Alert[]>({ reducer: (_, b) => b, default: () => [] }),
+
+  // Set by router (Day 21)
+  route: Annotation<'yield' | 'migration' | 'alert' | 'knowledge'>({
+    reducer: (_, b) => b, default: () => 'knowledge',
+  }),
+
+  // Set by subgraphs / approvalGate (Day 22)
+  intent: Annotation<AIIntent | null>({ reducer: (_, b) => b, default: () => null }),
+  approvalStatus: Annotation<'pending' | 'approved' | 'rejected' | null>({
+    reducer: (_, b) => b, default: () => null,
+  }),
+})
+```
+
+Removed: `userPositions`, `userHistory` (dead — tools wrote into messages anyway), `requiresApproval` (replaced by `approvalStatus` + real interrupt on Day 22). `alerts` renamed to `triggeredAlerts` for clarity.
+
+### 20.5 Update non-streaming chat route to match new state shape
+
+**File**: `frontend/app/api/chat/route.ts` (MODIFY)
+
+Replace `result.requiresApproval` with `result.approvalStatus === 'pending'` in the response envelope. Behaviour unchanged this day — the underlying flag is still set by the existing `formatIntent` node.
+
+### 20.6 Verification — Day 20
+
+- [ ] `docker exec vault-postgres psql -U vault -d vault -c "\dx"` lists `vector` extension
+- [ ] App boots without errors; logs show `PostgresStore.setup()` ran
+- [ ] Throwaway test:
+  ```typescript
+  const store = await getStore()
+  await store.put(['test-user', 'profile'], 'k1', { value: 'I love pizza' })
+  const hits = await store.search(['test-user', 'profile'], { query: "user's food preference" })
+  // expect [{ value: { value: 'I love pizza' }, score: > 0.5 }]
+  ```
+- [ ] Existing `/api/chat` flow still works end-to-end (yield query, alert set, migration suggestion)
+- [ ] Server restart: store data persists; conversation checkpoints still load
+- [ ] **Deliverable**: commit `feat: wire PostgresStore + pgvector for long-term memory infrastructure`
+
+---
+
+## Day 21: Graph topology — Parallel prep, router, subgraphs, hot-path memory
+
+Day 21 replaces the monolithic graph with the new topology. HITL is wired but uses a **stub** — real `interrupt()` lands on Day 22. All existing scenarios must still pass at end of day.
+
+### 21.1 Extract fetchMarket parallel prep node
+
+**File**: `frontend/lib/agent/nodes/fetchMarket.ts` (NEW)
+
+Pure I/O. Calls `/api/vault-context`, writes `vaultContext` channel:
+
+```typescript
+import type { AgentStateType } from '../state'
+
+export async function fetchMarket(state: AgentStateType): Promise<Partial<AgentStateType>> {
+  if (!state.userId) return {}
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
+  const resp = await fetch(`${appUrl}/api/vault-context`)
+  if (!resp.ok) return {}
+  const json = await resp.json()
+  return json.success ? { vaultContext: json.data } : {}
+}
+```
+
+### 21.2 Extract loadMemory parallel prep node
+
+**File**: `frontend/lib/agent/nodes/loadMemory.ts` (NEW)
+
+Reads top-K relevant facts via vector search. Per docs, `runtime.store` is auto-injected:
+
+```typescript
+import { LangGraphRunnableConfig } from '@langchain/langgraph'
+
+export async function loadMemory(state: AgentStateType, config: LangGraphRunnableConfig) {
+  const store = config.store
+  if (!store || !state.userId) return { relevantMemories: [] }
+  const lastUser = state.messages.findLast(m => m._getType() === 'human')
+  const query = typeof lastUser?.content === 'string' ? lastUser.content : ''
+  const hits = await store.search([state.userId, 'profile'], { query, limit: 5 })
+  return { relevantMemories: hits.map(h => h.value as MemoryFact) }
+}
+```
+
+### 21.3 Extract checkAlerts parallel prep node
+
+**File**: `frontend/lib/agent/nodes/checkAlerts.ts` (NEW — extracted from existing `graph.ts`)
+
+Move the existing `checkAlerts` body verbatim. Writes `triggeredAlerts` and appends `[SYSTEM ALERT]` HumanMessage when applicable. No logic change.
+
+### 21.4 Build router node with structured output
+
+**File**: `frontend/lib/agent/nodes/router.ts` (NEW)
+
+Classifies user intent, writes `route` channel. Uses `withStructuredOutput` per workflow-routing pattern in docs:
+
+```typescript
+import { z } from 'zod'
+import { ChatOpenAI } from '@langchain/openai'
+import { SystemMessage } from '@langchain/core/messages'
+import { ROUTER_PROMPT } from '../prompts'
+
+const routerSchema = z.object({
+  route: z.enum(['yield', 'migration', 'alert', 'knowledge']),
+  reasoning: z.string(),
+})
+
+const routerLlm = new ChatOpenAI({
+  model: process.env.OPENAI_API_MODEL || 'gpt-5.2',
+  temperature: 0,
+}).withStructuredOutput(routerSchema)
+
+export async function routerNode(state: AgentStateType) {
+  const { route } = await routerLlm.invoke([
+    new SystemMessage(ROUTER_PROMPT),
+    ...state.messages,
+  ])
+  return { route }
+}
+
+export function routerEdge(state: AgentStateType) {
+  return state.route
+}
+```
+
+### 21.5 Build consolidateMemory node (hot-path extraction)
+
+**File**: `frontend/lib/agent/nodes/consolidateMemory.ts` (NEW)
+
+Runs after each subgraph, before END. Cheap model + structured output. **Only memory-write path** — matches the docs' "hot path" default. Background cron is future work.
+
+```typescript
+const extractorLlm = new ChatOpenAI({ model: 'gpt-4o-mini', temperature: 0 })
+  .withStructuredOutput(z.object({
+    upsert: z.array(z.object({
+      key: z.string(),
+      value: z.string(),
+      category: z.enum(['preference', 'behavior', 'decision']),
+    })),
+    retract_keys: z.array(z.string()),
+  }))
+
+export async function consolidateMemory(state: AgentStateType, config) {
+  const store = config.store
+  if (!store || !state.userId) return {}
+
+  const existing = await store.search([state.userId, 'profile'])
+  const existingText = existing.map(h => `${h.value.key}: ${h.value.value}`).join('\n')
+  const tail = state.messages.slice(-4)
+
+  const { upsert, retract_keys } = await extractorLlm.invoke([
+    new SystemMessage(EXTRACTION_PROMPT),
+    new HumanMessage(`Existing facts:\n${existingText || '(none)'}\n\nRecent turn:\n${formatMessages(tail)}`),
+  ])
+
+  for (const f of upsert) {
+    await store.put([state.userId, 'profile'], f.key, {
+      ...f, confidence: 0.7, updatedAt: new Date().toISOString(),
+    })
+  }
+  for (const k of retract_keys) {
+    await store.delete([state.userId, 'profile'], k)
+  }
+  return {}
+}
+```
+
+### 21.6 Split system prompts by subgraph
+
+**File**: `frontend/lib/agent/prompts.ts` (MODIFY)
+
+Replace single `SYSTEM_PROMPT` with six narrower prompts, each containing only what its consumer needs. Each subgraph prompt includes the memory-injection placeholder:
+
+```typescript
+export const ROUTER_PROMPT = `Classify the user's request into one of:
+- yield: yield/investing/positions questions
+- migration: cross-chain migration requests with explicit chain mention
+- alert: setting or reading alerts
+- knowledge: general explanations, no action needed
+Pick the most specific. Default to knowledge when unsure.`
+
+export const YIELD_PROMPT = `You are the yield-strategy specialist...
+## What we know about this user
+{memoryFacts}
+## Your tools
+- get_market_data, get_user_positions, get_user_history
+...`
+
+export const MIGRATION_PROMPT = `You are the cross-chain migration specialist...`
+export const ALERT_PROMPT = `You are the alert manager...`
+export const KNOWLEDGE_PROMPT = `You answer DeFi knowledge questions concisely...`
+export const EXTRACTION_PROMPT = `You extract durable facts about the user...
+Return JSON: { upsert: [...], retract_keys: [...] }
+Do not invent facts not evidenced in the conversation.`
+```
+
+### 21.7 Build yieldSubgraph
+
+**File**: `frontend/lib/agent/subgraphs/yield.ts` (NEW)
+
+Standard ReAct loop. Shares parent's `messages` channel, so passes directly to parent's `addNode` per docs' "shared state" pattern:
+
+```typescript
+import { StateGraph, START, END } from '@langchain/langgraph'
+import { ToolNode } from '@langchain/langgraph/prebuilt'
+import { AgentState, type AgentStateType } from '../state'
+import { yieldTools } from '../tools'
+
+const llm = /* ChatOpenAI with YIELD_PROMPT memory injection */ .bindTools(yieldTools)
+
+async function yieldAgent(state: AgentStateType) {
+  const memoryFacts = state.relevantMemories.map(f => `- ${f.key}: ${f.value}`).join('\n')
+  const sys = YIELD_PROMPT.replace('{memoryFacts}', memoryFacts || 'No prior history.')
+  const response = await llm.invoke([new SystemMessage(sys), ...state.messages])
+  return { messages: [response] }
+}
+
+function shouldContinue(state: AgentStateType) {
+  const last = state.messages.at(-1) as AIMessage
+  return last.tool_calls?.length ? 'tools' : 'END'
+}
+
+export const yieldSubgraph = new StateGraph(AgentState)
+  .addNode('agent', yieldAgent)
+  .addNode('tools', new ToolNode(yieldTools))
+  .addEdge(START, 'agent')
+  .addConditionalEdges('agent', shouldContinue, { tools: 'tools', END })
+  .addEdge('tools', 'agent')
+  .compile()
+```
+
+### 21.8 Build migrationSubgraph (HITL stub for Day 21)
+
+**File**: `frontend/lib/agent/subgraphs/migration.ts` (NEW)
+
+Same ReAct loop ending in `approvalGate`. **Day 21 stub**: `approvalGate` just sets `approvalStatus: 'pending'` and returns. Real `interrupt()` lands Day 22.
+
+```typescript
+async function approvalGate(state: AgentStateType) {
+  if (state.intent?.action_data?.type !== 'cross_chain_migrate') return {}
+  // Day 21 stub — Day 22 replaces with interrupt()
+  return { approvalStatus: 'pending' as const }
+}
+
+export const migrationSubgraph = new StateGraph(AgentState)
+  .addNode('agent', migrationAgent)
+  .addNode('tools', new ToolNode(migrationTools))
+  .addNode('approvalGate', approvalGate)
+  .addEdge(START, 'agent')
+  .addConditionalEdges('agent', shouldContinue, { tools: 'tools', approvalGate: 'approvalGate' })
+  .addEdge('tools', 'agent')
+  .addEdge('approvalGate', END)
+  .compile()
+```
+
+### 21.9 Build alertSubgraph
+
+**File**: `frontend/lib/agent/subgraphs/alert.ts` (NEW)
+
+Focused ReAct loop with `[set_alert, get_alerts]` tools only. Same shape as yieldSubgraph.
+
+### 21.10 Build knowledgeSubgraph
+
+**File**: `frontend/lib/agent/subgraphs/knowledge.ts` (NEW)
+
+Single LLM call — no tools, fast path:
+
+```typescript
+async function knowledgeAgent(state: AgentStateType) {
+  const memoryFacts = state.relevantMemories.map(f => `- ${f.key}: ${f.value}`).join('\n')
+  const sys = KNOWLEDGE_PROMPT.replace('{memoryFacts}', memoryFacts || 'No prior history.')
+  const response = await llm.invoke([new SystemMessage(sys), ...state.messages])
+  return { messages: [response] }
+}
+
+export const knowledgeSubgraph = new StateGraph(AgentState)
+  .addNode('agent', knowledgeAgent)
+  .addEdge(START, 'agent')
+  .addEdge('agent', END)
+  .compile()
+```
+
+### 21.11 Reassemble parent graph
+
+**File**: `frontend/lib/agent/graph.ts` (REWRITE)
+
+Wire parallel prep + router + subgraphs + consolidateMemory. Per docs, multiple edges to the same node make LangGraph wait for all to complete (converge pattern):
+
+```typescript
+const workflow = new StateGraph(AgentState)
+  // Parallel prep
+  .addNode('fetchMarket', fetchMarket)
+  .addNode('loadMemory', loadMemory)
+  .addNode('checkAlerts', checkAlerts)
+  // Router
+  .addNode('router', routerNode)
+  // Subgraphs (compiled, share parent state)
+  .addNode('yield', yieldSubgraph)
+  .addNode('migration', migrationSubgraph)
+  .addNode('alert', alertSubgraph)
+  .addNode('knowledge', knowledgeSubgraph)
+  // Memory consolidation
+  .addNode('consolidateMemory', consolidateMemory)
+
+  // Fan-out
+  .addEdge(START, 'fetchMarket')
+  .addEdge(START, 'loadMemory')
+  .addEdge(START, 'checkAlerts')
+  // Converge → router
+  .addEdge('fetchMarket', 'router')
+  .addEdge('loadMemory', 'router')
+  .addEdge('checkAlerts', 'router')
+  // Branch
+  .addConditionalEdges('router', routerEdge, {
+    yield: 'yield', migration: 'migration', alert: 'alert', knowledge: 'knowledge',
+  })
+  // Converge → memory
+  .addEdge('yield', 'consolidateMemory')
+  .addEdge('migration', 'consolidateMemory')
+  .addEdge('alert', 'consolidateMemory')
+  .addEdge('knowledge', 'consolidateMemory')
+  .addEdge('consolidateMemory', END)
+```
+
+Subgraphs do NOT set their own checkpointer (per-invocation persistence per docs). The parent's checkpointer + store propagate automatically.
+
+### 21.12 Group tools by subgraph
+
+**File**: `frontend/lib/agent/tools.ts` (MODIFY)
+
+Tool bodies unchanged. Add new exports for narrower tool lists:
+
+```typescript
+export const yieldTools = [getMarketData, getUserPositions, getUserHistory]
+export const migrationTools = [getMarketData, getUserPositions]
+export const alertTools = [setAlert, getAlerts]
+// keep existing `agentTools` export for any legacy import
+```
+
+### 21.13 Verification — Day 21
+
+- [ ] **Parallel prep timing**: wrap each prep node in `console.time`. Total wall-clock ≈ slowest node, not sum (proves fan-out works).
+- [ ] **Routing correctness**: send 4 representative messages, confirm `route` is correct via `agent.getState(config)`:
+  - "should I invest?" → `yield`
+  - "I have 1000 USDC, migrate to Arbitrum?" → `migration`
+  - "alert me if Base APY drops below 3%" → `alert`
+  - "what is USDC?" → `knowledge`
+- [ ] **Memory write**: send any message, then `SELECT * FROM store WHERE namespace LIKE '%profile%'` shows facts written.
+- [ ] **Memory read**: open new thread for same user, send a follow-up. System prompt for the chosen subgraph contains the prior facts.
+- [ ] **Per-user isolation**: seed two distinct wallet addresses, confirm one user's facts never appear in the other's prompt.
+- [ ] **Regression**: every Day-19 integration scenario still passes (yield, migration suggest, alert set + warn, multi-turn).
+- [ ] **Deliverable**: commit `refactor: parallel prep + router + subgraphs + hot-path memory consolidation`
+
+---
+
+## Day 22: Real HITL via interrupt(), multi-mode streaming, frontend resume flow
+
+Day 22 replaces the migration approval stub with a genuine `interrupt()`, rewrites the streaming endpoint to emit token-level SSE events, and updates the frontend to render a risk modal that calls a new resume route.
+
+### 22.1 Replace stub with real interrupt() in migration subgraph
+
+**File**: `frontend/lib/agent/subgraphs/migration.ts` (MODIFY)
+
+Replace the `approvalGate` stub. `interrupt()` pauses execution; the resume value (`true|false`) becomes the return value of the call:
+
+```typescript
+import { interrupt } from '@langchain/langgraph'
+
+async function approvalGate(state: AgentStateType) {
+  if (state.intent?.action_data?.type !== 'cross_chain_migrate') return {}
+
+  const decision = interrupt({
+    question: 'Approve cross-chain migration?',
+    details: state.intent.action_data,  // amount, chains, deltaApy, breakeven
+  })
+
+  return {
+    intent: {
+      ...state.intent,
+      action: decision ? 'intent_confirmed' : 'suggest',
+    },
+    approvalStatus: decision ? 'approved' as const : 'rejected' as const,
+  }
+}
+```
+
+When the graph hits `interrupt()`, LangGraph saves state via the parent's checkpointer and exits. The next `agent.invoke(new Command({ resume }), config)` re-enters the node from the top, but `interrupt()` returns the resume value instead of pausing.
+
+### 22.2 Create resume route
+
+**File**: `frontend/app/api/chat/resume/route.ts` (NEW)
+
+```typescript
+import { NextRequest, NextResponse } from 'next/server'
+import { Command } from '@langchain/langgraph'
+import { getAgent } from '@/lib/agent/graph'
+
+export async function POST(request: NextRequest) {
+  const { thread_id, user_id, decision } = await request.json()
+  if (!thread_id || typeof decision !== 'boolean') {
+    return NextResponse.json({ error: 'thread_id and decision required' }, { status: 400 })
+  }
+
+  const agent = await getAgent()
+  const result = await agent.invoke(
+    new Command({ resume: decision }),
+    { configurable: { thread_id, user_id } },
+  )
+
+  return NextResponse.json({
+    success: true,
+    intent: result.intent,
+    approvalStatus: result.approvalStatus,
+    conversation_id: thread_id,
+  })
+}
+```
+
+### 22.3 Update non-streaming chat route for interrupt detection
+
+**File**: `frontend/app/api/chat/route.ts` (MODIFY)
+
+After `agent.invoke(...)`, check for `__interrupt__` and surface it to the client:
+
+```typescript
+const result = await agent.invoke(input, { configurable: { thread_id, user_id } })
+
+if (result.__interrupt__) {
+  return NextResponse.json({
+    success: true,
+    interrupted: true,
+    interrupt: result.__interrupt__[0],
+    conversation_id: thread_id,
+  })
+}
+
+return NextResponse.json({ success: true, intent: result.intent, conversation_id: thread_id })
+```
+
+### 22.4 Rewrite streaming route for multi-mode SSE
+
+**File**: `frontend/app/api/chat/stream/route.ts` (REWRITE)
+
+Use three stream modes: `updates` (per-node progress), `messages` (token-by-token), `custom` (writer events). Break the stream when `__interrupt__` appears so the client can prompt for approval:
+
+```typescript
+const events = await agent.stream(input, {
+  configurable: { thread_id, user_id },
+  streamMode: ['updates', 'messages', 'custom'],
+  subgraphs: true,
+})
+
+for await (const [namespace, mode, chunk] of events) {
+  if (mode === 'messages') {
+    const [msg, meta] = chunk
+    if (msg.content && meta.langgraph_node !== 'consolidateMemory' && meta.langgraph_node !== 'router') {
+      emit({ type: 'token', content: msg.content, node: meta.langgraph_node })
+    }
+  } else if (mode === 'updates') {
+    const [nodeName, update] = Object.entries(chunk)[0]
+    if (update?.__interrupt__) {
+      emit({ type: 'interrupt', interrupt: update.__interrupt__[0], conversation_id: thread_id })
+      break  // client will resume via /api/chat/resume
+    }
+    emit({ type: 'progress', node: nodeName })
+    if (nodeName === 'consolidateMemory' && update?.intent) {
+      emit({ type: 'intent', intent: update.intent })
+    }
+  }
+}
+emit({ type: 'done' })
+```
+
+### 22.5 Handle token streaming in AIPanel
+
+**File**: `frontend/components/AIPanel.tsx` (MODIFY)
+
+Add SSE event handlers. On `type: 'token'`, append to currently-streaming bubble. Filter out tokens from `consolidateMemory` and `router` (already done backend-side, but defensive):
+
+```typescript
+case 'token':
+  setMessages(prev => prev.map((m, i) =>
+    i === prev.length - 1 ? { ...m, content: m.content + event.content } : m
+  ))
+  break
+```
+
+### 22.6 Render risk modal on interrupt event
+
+**File**: `frontend/components/RiskModal.tsx` (NEW) and `AIPanel.tsx` (MODIFY)
+
+When SSE emits `type: 'interrupt'`, AIPanel sets state `pendingApproval = event.interrupt` and renders the modal. Modal shows `interrupt.value.details` (action_data: amount, chains, deltaApy, breakeven). Two buttons: "Approve & Sign" / "Cancel".
+
+### 22.7 Wire resume call
+
+**File**: `frontend/components/AIPanel.tsx` (MODIFY)
+
+On approve/cancel:
+
+```typescript
+const handleApproval = async (decision: boolean) => {
+  setPendingApproval(null)
+  const resp = await fetch('/api/chat/resume', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ thread_id: conversationId, user_id: address, decision }),
+  })
+  const data = await resp.json()
+  if (data.intent) handleIntent(data.intent)
+}
+```
+
+Replace any remaining UI checks against the old `requiresApproval` field. The modal now opens on SSE `interrupt` event, NOT on intent shape.
+
+### 22.8 Verification — Day 22
+
+- [ ] **Migration HITL end-to-end (browser)**: connect wallet, send "I have 1000 USDC, should I migrate to Arbitrum?". Tokens stream in. Risk modal appears with real `action_data`. Click Approve → final intent has `action: 'intent_confirmed'`, `approvalStatus: 'approved'`. Repeat with Cancel → `action: 'suggest'`, `approvalStatus: 'rejected'`.
+- [ ] **Resume after restart**: trigger interrupt, kill server, restart, POST `/api/chat/resume` with same `thread_id` → graph completes correctly (proves checkpointer durability across server restarts).
+- [ ] **Token streaming**: visible character-by-character output for yield/knowledge responses. Tokens from `consolidateMemory` extraction are NOT shown in UI (filtered).
+- [ ] **Non-migration paths unchanged**: yield/alert/knowledge questions complete without modal.
+- [ ] **Regression**: all Day-19 + Day-21 integration scenarios still pass.
+- [ ] **Deliverable**: commit `feat: real HITL interrupts + multi-mode streaming + risk modal flow`
+
+---
+
+## Files Summary
+
+### New Files
+| File | Purpose |
+|------|---------|
+| `frontend/lib/agent/memory.ts` | `getStore()` singleton + `MemoryFact` type |
+| `frontend/lib/agent/nodes/fetchMarket.ts` | Parallel prep: vault-context API fetch |
+| `frontend/lib/agent/nodes/loadMemory.ts` | Parallel prep: vector search over user's profile namespace |
+| `frontend/lib/agent/nodes/checkAlerts.ts` | Parallel prep: extracted from existing graph.ts |
+| `frontend/lib/agent/nodes/router.ts` | Intent classification with `withStructuredOutput` |
+| `frontend/lib/agent/nodes/consolidateMemory.ts` | Hot-path memory extraction (gpt-4o-mini) |
+| `frontend/lib/agent/subgraphs/yield.ts` | ReAct loop for yield/positions questions |
+| `frontend/lib/agent/subgraphs/migration.ts` | ReAct loop + `approvalGate` with `interrupt()` |
+| `frontend/lib/agent/subgraphs/alert.ts` | ReAct loop for alert management |
+| `frontend/lib/agent/subgraphs/knowledge.ts` | No-tools fast-path for knowledge questions |
+| `frontend/app/api/chat/resume/route.ts` | POST resume endpoint for HITL approval |
+| `frontend/components/RiskModal.tsx` | Renders interrupt payload as approve/cancel UI |
+
+### Modified Files
+| File | Changes |
+|------|---------|
+| `frontend/lib/agent/db.ts` | Add `CREATE EXTENSION vector` to `setupTables()` |
+| `frontend/lib/agent/state.ts` | Add `relevantMemories`, `triggeredAlerts`, `route`, `approvalStatus`. Remove `userPositions`, `userHistory`, `requiresApproval`. |
+| `frontend/lib/agent/graph.ts` | Replace monolithic graph with parallel-prep + router + subgraphs + consolidateMemory assembly. Compile with `{ checkpointer, store }`. |
+| `frontend/lib/agent/prompts.ts` | Split into `ROUTER_PROMPT`, `YIELD_PROMPT`, `MIGRATION_PROMPT`, `ALERT_PROMPT`, `KNOWLEDGE_PROMPT`, `EXTRACTION_PROMPT` |
+| `frontend/lib/agent/tools.ts` | Add narrower exports: `yieldTools`, `migrationTools`, `alertTools`. Tool bodies unchanged. |
+| `frontend/app/api/chat/route.ts` | Detect `__interrupt__` → return `{ interrupted: true, interrupt }` |
+| `frontend/app/api/chat/stream/route.ts` | Multi-mode SSE: `['updates','messages','custom']` + `subgraphs: true`. Emit `init`, `progress`, `token`, `interrupt`, `intent`, `done`. |
+| `frontend/components/AIPanel.tsx` | Handle new SSE event types. Token streaming. Resume flow on modal approve/cancel. |
+
+### Deferred (NOT in this plan)
+| Item | Why deferred |
+|------|--------------|
+| Background consolidation cron (per docs' "Background consolidation" pattern) | Hot-path is the docs default. Add when traffic justifies it. Cron interval MUST match lookback window. |
+| Authentication (SIWE / JWT) | `user_id` still trusted from request body. Address before production. |
+| Conversations sidebar UI | `conversations` table remains dead schema. Wire or drop in dedicated UI pass. |
+| Drop `conversations` table from `setupTables()` | Out of scope for this redesign. |
