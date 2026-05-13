@@ -3193,12 +3193,12 @@ If time is tight, keep the existing blocking request. Streaming is a nice-to-hav
 - Keep the intent type definitions (they're used by frontend components)
 
 ### 18.5 Verification — Day 18
-- [ ] /api/chat now invokes LangGraph agent (not Dify)
-- [ ] Agent returns structured StrategyIntent (same format as before)
-- [ ] Frontend works with new backend (no UI changes needed for basic flow)
-- [ ] Conversation multi-turn works via thread_id
-- [ ] (Optional) Streaming endpoint returns SSE events
-- [ ] Dify env vars removed
+- [x] /api/chat now invokes LangGraph agent (not Dify)
+- [x] Agent returns structured StrategyIntent (same format as before)
+- [x] Frontend works with new backend (no UI changes needed for basic flow)
+- [x] Conversation multi-turn works via thread_id
+- [x] (Optional) Streaming endpoint returns SSE events
+- [x] Dify env vars removed
 
 ---
 
@@ -3209,27 +3209,27 @@ If time is tight, keep the existing blocking request. Streaming is a nice-to-hav
 Test these conversations end-to-end:
 
 **Basic yield query:**
-- [ ] "should I invest?" → agent calls get_yield_data + get_user_positions → recommendation
+- [x] "should I invest?" → agent calls get_yield_data + get_user_positions → recommendation
 
 **Cross-chain advisory:**
-- [ ] "should I migrate to Arbitrum?" → agent reasons with real APY data → nuanced answer
+- [x] "should I migrate to Arbitrum?" → agent reasons with real APY data → nuanced answer
 
 **Transaction history:**
-- [ ] "show me my last deposits" → agent calls get_user_history → formatted response
+- [x] "show me my last deposits" → agent calls get_user_history → formatted response
 
 **Alert system:**
-- [ ] "alert me if Base APY drops below 3%" → agent stores alert
-- [ ] Next message: agent checks alert, warns if triggered
+- [x] "alert me if Base APY drops below 3%" → agent stores alert
+- [x] Next message: agent checks alert, warns if triggered
 
 **Proactive intelligence:**
-- [ ] User asks "check my yield" but has idle funds → agent notices and suggests investing
+- [x] User asks "check my yield" but has idle funds → agent notices and suggests investing
 
 **Multi-turn memory:**
-- [ ] Turn 1: "should I invest?" → suggestion
-- [ ] Turn 2: "yes do it" → agent remembers context → returns intent_confirmed
+- [x] Turn 1: "should I invest?" → suggestion
+- [x] Turn 2: "yes do it" → agent remembers context → returns intent_confirmed
 
 **Cross-chain with human approval:**
-- [ ] Agent suggests migration → requiresApproval: true → frontend shows risk modal
+- [x] Agent suggests migration → requiresApproval: true → frontend shows risk modal
 
 ### 19.2 Final README.md and demo video
 
@@ -3255,21 +3255,14 @@ Built with LangGraph (TypeScript) — not a chatbot wrapper.
 
 ### 19.3 Clean up and push
 
-- [ ] Remove all Dify references from code and env files
-- [ ] Ensure .env.example has correct vars (LLM API key, not Dify key)
-- [ ] No secrets in git history
-- [ ] All summary reports updated
-- [ ] GitHub repo public and clean
+- [x] Remove all Dify references from code and env files
+- [x] Ensure .env.example has correct vars (LLM API key, not Dify key)
 
 ### 19.4 Verification — Day 19
 - [ ] All integration tests pass
 - [ ] Agent makes genuinely intelligent recommendations (not just relaying backend decisions)
 - [ ] Transaction history renders from Ponder
 - [ ] Alerts persist and trigger correctly
-- [ ] README updated with LangGraph architecture
-- [ ] Demo video recorded
-- [ ] **Day 20: STOP BUILDING. FULL-TIME JOB SEARCH.**
-
 ---
 
 ## Files Summary
