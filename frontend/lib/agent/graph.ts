@@ -7,6 +7,7 @@ import { AgentState, AgentStateType } from './state'
 import { agentTools } from './tools'
 import { SYSTEM_PROMPT } from './prompts'
 import { setupTables } from './db'
+import { getStore } from './memory'
 import type { AIIntent, StrategyIntent } from '@/lib/ai-intent'
 
 // ─── LLM ──────────────────────────────────────────────────────────────────────
@@ -173,9 +174,10 @@ async function buildAgent() {
 
   const checkpointer = PostgresSaver.fromConnString(connectionString)
   await checkpointer.setup()   // creates LangGraph checkpoint tables
-  await setupTables()          // creates alerts + conversations tables
+  await setupTables()          // creates alerts + conversations tables, enables pgvector
+  const store = await getStore() // creates Store tables + vector indexes
 
-  return workflow.compile({ checkpointer })
+  return workflow.compile({ checkpointer, store })
 }
 
 export async function getAgent() {
