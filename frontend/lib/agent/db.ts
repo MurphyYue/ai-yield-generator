@@ -19,6 +19,8 @@ export function getDb(): Pool {
 export async function setupTables(): Promise<void> {
   const db = getDb()
   await db.query(`
+    CREATE EXTENSION IF NOT EXISTS vector;
+
     CREATE TABLE IF NOT EXISTS alerts (
       id          TEXT      PRIMARY KEY,
       user_address TEXT     NOT NULL,
