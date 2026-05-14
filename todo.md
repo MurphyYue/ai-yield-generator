@@ -3496,18 +3496,18 @@ Replace `result.requiresApproval` with `result.approvalStatus === 'pending'` in 
 
 ### 20.6 Verification — Day 20
 
-- [ ] `docker exec vault-postgres psql -U vault -d vault -c "\dx"` lists `vector` extension
-- [ ] App boots without errors; logs show `PostgresStore.setup()` ran
-- [ ] Throwaway test:
+- [x] `docker exec vault-postgres psql -U vault -d vault -c "\dx"` lists `vector` extension
+- [x] App boots without errors; logs show `PostgresStore.setup()` ran
+- [x] Throwaway test:
   ```typescript
   const store = await getStore()
   await store.put(['test-user', 'profile'], 'k1', { value: 'I love pizza' })
   const hits = await store.search(['test-user', 'profile'], { query: "user's food preference" })
   // expect [{ value: { value: 'I love pizza' }, score: > 0.5 }]
   ```
-- [ ] Existing `/api/chat` flow still works end-to-end (yield query, alert set, migration suggestion)
-- [ ] Server restart: store data persists; conversation checkpoints still load
-- [ ] **Deliverable**: commit `feat: wire PostgresStore + pgvector for long-term memory infrastructure`
+- [x] Existing `/api/chat` flow still works end-to-end (yield query, alert set, migration suggestion)
+- [x] Server restart: store data persists; conversation checkpoints still load
+- [x] **Deliverable**: commit `feat: wire PostgresStore + pgvector for long-term memory infrastructure`
 
 ---
 

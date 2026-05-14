@@ -81,7 +81,7 @@ async function checkAlerts(state: AgentStateType): Promise<Partial<AgentStateTyp
 
     return {
       vaultContext,
-      alerts: triggered,
+      triggeredAlerts: triggered,
       messages: [alertMessage],
     }
   } catch {
@@ -114,9 +114,9 @@ async function formatIntent(state: AgentStateType): Promise<Partial<AgentStateTy
       .trim()
 
     const parsed = JSON.parse(cleaned) as StrategyIntent
-    const requiresApproval = parsed.action_data?.type === 'cross_chain_migrate'
+    const approvalStatus = parsed.action_data?.type === 'cross_chain_migrate' ? 'pending' : null
 
-    return { intent: parsed as AIIntent, requiresApproval }
+    return { intent: parsed as AIIntent, approvalStatus }
   } catch {
     const fallback: StrategyIntent = {
       action: 'unknown',
@@ -131,7 +131,7 @@ async function formatIntent(state: AgentStateType): Promise<Partial<AgentStateTy
       },
       confidence: 'low',
     }
-    return { intent: fallback as AIIntent, requiresApproval: false }
+    return { intent: fallback as AIIntent, approvalStatus: null }
   }
 }
 

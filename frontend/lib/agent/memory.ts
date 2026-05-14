@@ -19,8 +19,8 @@ export async function getStore(): Promise<PostgresStore> {
 
   const embed = new OpenAIEmbeddings({
     model: 'text-embedding-3-small',
-    apiKey: process.env.OPENAI_API_KEY,
-    configuration: { baseURL: process.env.OPENAI_API_BASE_URL },
+    apiKey: process.env.OPENAI_EMBEDDINGS_API_KEY,
+    configuration: { baseURL: process.env.OPENAI_EMBEDDINGS_API_BASE_URL },
   })
 
   storeInstance = PostgresStore.fromConnString(connectionString, {
