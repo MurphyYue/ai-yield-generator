@@ -3994,6 +3994,279 @@ Replace any remaining UI checks against the old `requiresApproval` field. The mo
 
 ---
 
+## Day 23: SIWE Authentication — NextAuth + Postgres-backed session audit
+
+Day 23 closes the trust gap that the rest of the redesign assumes away: the server currently accepts `user_id` from the request body verbatim, so any caller can claim any wallet address and read another user's memory. This day wires up **SIWE (EIP-4361)** via NextAuth's Credentials provider, plus a `user_sessions` audit table so revocation, multi-device listing, and `last_seen_at` work without leaving NextAuth's JWT model. After Day 23, every protected route reads the wallet address from a cryptographically-proven session, never from the request body.
+
+### 23.1 Install dependencies + env vars
+
+**Files**: `frontend/package.json` (MODIFY), `frontend/.env.local` (MODIFY), `frontend/.env.example` (MODIFY)
+
+```bash
+cd frontend
+npm install next-auth@^4 siwe@^3 @rainbow-me/rainbowkit-siwe-next-auth --legacy-peer-deps
+```
+
+`--legacy-peer-deps` is needed because NextAuth v4 doesn't formally declare React 19 in peers. Runtime works; only the install-time peer check trips. Document this in `README.md` if convenient.
+
+Generate a secret and add to `.env.local`:
+
+```bash
+openssl rand -base64 32   # output → NEXTAUTH_SECRET
+```
+
+```env
+# ─── Auth ───────────────────────────────────────────────────────────────────
+# NextAuth session signing key. Required.
+NEXTAUTH_SECRET=<openssl rand -base64 32>
+# Public base URL where the app is served. Required.
+NEXTAUTH_URL=http://localhost:3000
+```
+
+Mirror the same block (with placeholder values) into `.env.example`.
+
+### 23.2 Schema — `user_sessions` audit table
+
+**File**: `frontend/lib/agent/db.ts` (MODIFY — extend existing `setupTables()`)
+
+Add the new CREATE TABLE and a partial index inside the same idempotent block:
+
+```sql
+CREATE TABLE IF NOT EXISTS user_sessions (
+  session_id    TEXT        PRIMARY KEY,          -- = JWT jti claim
+  user_address  TEXT        NOT NULL,
+  created_at    TIMESTAMP   NOT NULL DEFAULT NOW(),
+  last_seen_at  TIMESTAMP   NOT NULL DEFAULT NOW(),
+  ip            TEXT,
+  user_agent    TEXT,
+  revoked_at    TIMESTAMP                          -- null = active
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_sessions_user_active
+  ON user_sessions(user_address)
+  WHERE revoked_at IS NULL;
+```
+
+Reuse the existing `getDb()` Pool singleton in `db.ts:6-15` — no new connection logic.
+
+### 23.3 NextAuth route + SIWE Credentials provider
+
+**File**: `frontend/app/api/auth/[...nextauth]/route.ts` (NEW)
+**File**: `frontend/lib/auth.ts` (NEW — exports `authOptions` so other server code can call `getServerSession(authOptions)`)
+
+The flow encapsulated by the Credentials provider's `authorize()`:
+
+1. Parse `credentials.message` into a `SiweMessage`
+2. Get expected nonce via `getCsrfToken({ req })`
+3. `siweMessage.verify({ signature, nonce, domain, time: new Date().toISOString() })` — throws if any check fails
+4. Confirm `siweMessage.chainId` is in `[8453, 42161]` (Base, Arbitrum)
+5. Return `{ id: siweMessage.address }` on success — NextAuth will issue a JWT with `sub: address`
+
+Session lifecycle hooks:
+
+```typescript
+callbacks: {
+  // First sign-in: mint a jti and INSERT a user_sessions row
+  async jwt({ token, user }) {
+    if (user) {
+      token.jti = crypto.randomUUID()
+      const db = getDb()
+      await db.query(
+        `INSERT INTO user_sessions (session_id, user_address) VALUES ($1, $2)`,
+        [token.jti, user.id]
+      )
+    }
+    return token
+  },
+  // Expose address + sessionId on session.* so route handlers can use them
+  async session({ session, token }) {
+    session.address = token.sub as string
+    session.sessionId = token.jti as string
+    return session
+  },
+},
+
+events: {
+  async signOut({ token }) {
+    if (token?.jti) {
+      const db = getDb()
+      await db.query(
+        `UPDATE user_sessions SET revoked_at = NOW() WHERE session_id = $1`,
+        [token.jti]
+      )
+    }
+  },
+}
+```
+
+`session.strategy: 'jwt'` is mandatory — the Credentials provider only supports JWT sessions, hence the hybrid (JWT on the wire, audit row in Postgres).
+
+The handler file exports `GET = handler; POST = handler` per App Router convention. NextAuth v4 ≥ 4.22 supports this pattern natively.
+
+### 23.4 Server-side session helper
+
+**File**: `frontend/lib/auth.ts` (NEW — same file as authOptions for cohesion)
+
+```typescript
+// Single-call helper for protected routes.
+// Returns userAddress, or throws Response(401) if no valid + non-revoked session.
+export async function requireAuthenticatedAddress(req: NextRequest): Promise<string> {
+  const session = await getServerSession(authOptions)
+  if (!session?.address || !session.sessionId) {
+    throw new Response('Unauthorized', { status: 401 })
+  }
+
+  const db = getDb()
+  const result = await db.query(
+    `SELECT revoked_at FROM user_sessions WHERE session_id = $1`,
+    [session.sessionId]
+  )
+  if (!result.rows.length || result.rows[0].revoked_at) {
+    throw new Response('Session revoked', { status: 401 })
+  }
+
+  // Stamp last_seen_at + audit fields (fire-and-forget; don't block the request)
+  void db.query(
+    `UPDATE user_sessions
+       SET last_seen_at = NOW(), ip = $2, user_agent = $3
+       WHERE session_id = $1`,
+    [session.sessionId, req.headers.get('x-forwarded-for') ?? null, req.headers.get('user-agent') ?? null]
+  )
+
+  return session.address
+}
+```
+
+### 23.5 Wrap providers — SessionProvider + RainbowKitSiweNextAuthProvider
+
+**File**: `frontend/components/Providers.tsx` (MODIFY)
+
+Per the exploration, the existing order is `ThemeProvider → WagmiProvider → QueryClientProvider → RainbowKitProvider → children`. New order:
+
+```tsx
+<SessionProvider>                                  {/* outermost: makes useSession() available */}
+  <ThemeProvider>
+    <WagmiProvider config={wagmiConfig}>
+      <QueryClientProvider client={queryClient}>
+        <RainbowKitSiweNextAuthProvider
+          getSiweMessageOptions={() => ({
+            statement: 'Sign in to Vault Navigator',
+          })}
+        >
+          <RainbowKitProvider>{children}</RainbowKitProvider>
+        </RainbowKitSiweNextAuthProvider>
+      </QueryClientProvider>
+    </WagmiProvider>
+  </ThemeProvider>
+</SessionProvider>
+```
+
+The RainbowKit wrapper auto-detects the SessionProvider context and triggers a wallet `personal_sign` immediately after connect, using `getCsrfToken()` as the nonce. No further JSX changes are required in `WalletConnect.tsx` to make the flow work — only the sign-out behaviour (next subtask).
+
+### 23.6 Migrate `/api/chat` routes to session auth
+
+**Files**: `frontend/app/api/chat/route.ts` (MODIFY), `frontend/app/api/chat/stream/route.ts` (MODIFY)
+
+For both routes:
+
+1. Remove `user_id` from the request body interface
+2. Replace the body-derived `user_id` with `const userAddress = await requireAuthenticatedAddress(request)` wrapped in a try/catch that re-throws the 401 Response
+3. Pass `userAddress` as `userId` into the agent state and as `configurable.user_id`
+
+Concrete change in `/api/chat/route.ts:16-27`:
+
+```typescript
+// BEFORE
+const { message, user_id, conversation_id } = await request.json()
+if (!user_id) return NextResponse.json({ error: 'Wallet required' }, { status: 400 })
+
+// AFTER
+let userAddress: string
+try {
+  userAddress = await requireAuthenticatedAddress(request)
+} catch (resp) {
+  return resp as Response   // 401 from the helper
+}
+const { message, conversation_id } = await request.json()
+```
+
+The `/api/chat/resume` endpoint (Day 22) gets the same treatment when it lands.
+
+Public routes that stay unauthenticated (read-only, no PII): `/api/vault-context`.
+
+### 23.7 Wire signOut into the disconnect UX
+
+**File**: `frontend/components/WalletConnect.tsx` (MODIFY — line ~15)
+
+The component already calls `useDisconnect()` from wagmi. Add a parallel `signOut()` call from `next-auth/react` so the server-side `events.signOut` hook fires and `revoked_at` is set:
+
+```tsx
+import { signOut } from 'next-auth/react'
+
+const handleDisconnect = async () => {
+  await signOut({ redirect: false })  // marks user_sessions row revoked
+  disconnect()                         // wagmi tears down wallet connection
+}
+```
+
+Without this, a disconnected wallet would still hold a server-valid cookie until the JWT expires — small UX wart but real security gap.
+
+### 23.8 Optional sessions audit endpoints
+
+**File**: `frontend/app/api/auth/sessions/route.ts` (NEW)
+**File**: `frontend/app/api/auth/sessions/[session_id]/revoke/route.ts` (NEW)
+
+Two thin endpoints earn the "multi-device list + revoke" features the user originally asked for:
+
+```typescript
+// GET /api/auth/sessions
+// → [{ session_id, created_at, last_seen_at, ip, user_agent, current: boolean }]
+export async function GET(req: NextRequest) {
+  const userAddress = await requireAuthenticatedAddress(req)
+  const session = await getServerSession(authOptions)
+  const rows = await getDb().query(
+    `SELECT session_id, created_at, last_seen_at, ip, user_agent
+       FROM user_sessions
+       WHERE user_address = $1 AND revoked_at IS NULL
+       ORDER BY last_seen_at DESC`,
+    [userAddress]
+  )
+  return NextResponse.json(
+    rows.rows.map((r) => ({ ...r, current: r.session_id === session!.sessionId }))
+  )
+}
+
+// POST /api/auth/sessions/[session_id]/revoke
+// Ownership check is non-negotiable — never revoke another user's session.
+export async function POST(req: NextRequest, { params }) {
+  const userAddress = await requireAuthenticatedAddress(req)
+  await getDb().query(
+    `UPDATE user_sessions
+       SET revoked_at = NOW()
+       WHERE session_id = $1 AND user_address = $2`,
+    [params.session_id, userAddress]
+  )
+  return NextResponse.json({ success: true })
+}
+```
+
+Frontend UI (a "Connected devices" pane somewhere in settings) is out of scope for Day 23 — the endpoints are enough to call them an enterprise feature when interview discussions land here.
+
+### 23.9 Verification — Day 23
+
+- [ ] **Connect flow**: connect wallet → wallet pops SIWE message → user signs → JWT cookie set in browser → `SELECT * FROM user_sessions WHERE user_address = '0x...'` shows one row.
+- [ ] **Protected route works**: `curl -b cookie.txt -X POST /api/chat -d '{"message":"hi"}'` returns a valid agent response (no `user_id` in body).
+- [ ] **Anonymous rejected**: `curl -X POST /api/chat -d '{"message":"hi"}'` (no cookie) returns 401.
+- [ ] **Identity spoofing rejected**: `curl -b cookie.txt -X POST /api/chat -d '{"message":"hi", "user_id":"0xVictim..."}'` STILL uses the cookie's address. The body field is ignored.
+- [ ] **Revocation works**: sign out via UI → `revoked_at` column populated → next request with the same cookie returns 401.
+- [ ] **SIWE message tampered → rejected**: change `chainId` or `domain` in the signed message client-side → server rejects via `siweMessage.verify()`.
+- [ ] **Nonce replay rejected**: capture the SIWE signature + nonce, replay → second attempt rejected (NextAuth's CSRF middleware invalidates the nonce after one use).
+- [ ] **Memory isolation preserved**: two wallets sign in from different browsers, both write memories → each only sees their own (`store.search([userAddress, 'profile'], …)` partitions correctly).
+- [ ] **Sessions endpoint**: `GET /api/auth/sessions` while logged in returns the current row with `current: true`. Logging in from a second device adds a row.
+- [ ] **Deliverable**: commit `feat: SIWE authentication via NextAuth with Postgres session audit`
+
+---
+
 ## Files Summary
 
 ### New Files
@@ -4011,23 +4284,33 @@ Replace any remaining UI checks against the old `requiresApproval` field. The mo
 | `frontend/lib/agent/subgraphs/knowledge.ts` | No-tools fast-path for knowledge questions |
 | `frontend/app/api/chat/resume/route.ts` | POST resume endpoint for HITL approval |
 | `frontend/components/RiskModal.tsx` | Renders interrupt payload as approve/cancel UI |
+| `frontend/app/api/auth/[...nextauth]/route.ts` | NextAuth handler with SIWE Credentials provider (Day 23) |
+| `frontend/lib/auth.ts` | `authOptions` + `requireAuthenticatedAddress()` helper (Day 23) |
+| `frontend/app/api/auth/sessions/route.ts` | List authenticated user's active sessions (Day 23) |
+| `frontend/app/api/auth/sessions/[session_id]/revoke/route.ts` | Revoke a specific session (Day 23) |
 
 ### Modified Files
 | File | Changes |
 |------|---------|
-| `frontend/lib/agent/db.ts` | Add `CREATE EXTENSION vector` to `setupTables()` |
+| `frontend/lib/agent/db.ts` | Add `CREATE EXTENSION vector` to `setupTables()`. Add `user_sessions` table + partial index (Day 23). |
 | `frontend/lib/agent/state.ts` | Add `relevantMemories`, `triggeredAlerts`, `route`, `approvalStatus`. Remove `userPositions`, `userHistory`, `requiresApproval`. |
 | `frontend/lib/agent/graph.ts` | Replace monolithic graph with parallel-prep + router + subgraphs + consolidateMemory assembly. Compile with `{ checkpointer, store }`. |
 | `frontend/lib/agent/prompts.ts` | Split into `ROUTER_PROMPT`, `YIELD_PROMPT`, `MIGRATION_PROMPT`, `ALERT_PROMPT`, `KNOWLEDGE_PROMPT`, `EXTRACTION_PROMPT` |
 | `frontend/lib/agent/tools.ts` | Add narrower exports: `yieldTools`, `migrationTools`, `alertTools`. Tool bodies unchanged. |
-| `frontend/app/api/chat/route.ts` | Detect `__interrupt__` → return `{ interrupted: true, interrupt }` |
-| `frontend/app/api/chat/stream/route.ts` | Multi-mode SSE: `['updates','messages','custom']` + `subgraphs: true`. Emit `init`, `progress`, `token`, `interrupt`, `intent`, `done`. |
+| `frontend/app/api/chat/route.ts` | Detect `__interrupt__` → return `{ interrupted: true, interrupt }`. Replace body `user_id` with `requireAuthenticatedAddress()` (Day 23). |
+| `frontend/app/api/chat/stream/route.ts` | Multi-mode SSE: `['updates','messages','custom']` + `subgraphs: true`. Emit `init`, `progress`, `token`, `interrupt`, `intent`, `done`. Switch to session auth (Day 23). |
 | `frontend/components/AIPanel.tsx` | Handle new SSE event types. Token streaming. Resume flow on modal approve/cancel. |
+| `frontend/components/Providers.tsx` | Wrap tree with `SessionProvider` + `RainbowKitSiweNextAuthProvider` (Day 23). |
+| `frontend/components/WalletConnect.tsx` | Call `signOut({ redirect: false })` alongside `disconnect()` so server-side session is revoked (Day 23). |
+| `frontend/package.json` | Add `next-auth`, `siwe`, `@rainbow-me/rainbowkit-siwe-next-auth` (Day 23). |
+| `frontend/.env.local` / `.env.example` | Add `NEXTAUTH_SECRET`, `NEXTAUTH_URL` (Day 23). |
 
 ### Deferred (NOT in this plan)
 | Item | Why deferred |
 |------|--------------|
 | Background consolidation cron (per docs' "Background consolidation" pattern) | Hot-path is the docs default. Add when traffic justifies it. Cron interval MUST match lookback window. |
-| Authentication (SIWE / JWT) | `user_id` still trusted from request body. Address before production. |
 | Conversations sidebar UI | `conversations` table remains dead schema. Wire or drop in dedicated UI pass. |
+| Connected-devices settings UI | Day 23 ships the backend endpoints (`GET /api/auth/sessions`, `POST .../revoke`) but no settings page. Add when product polish is in scope. |
 | Drop `conversations` table from `setupTables()` | Out of scope for this redesign. |
+
+---
