@@ -283,3 +283,11 @@ export const getAlerts = tool(
 )
 
 export const agentTools = [getMarketData, getUserPositions, getUserHistory, setAlert, getAlerts]
+
+// ─── Per-subgraph tool groups (Day 21) ────────────────────────────────────
+// Each subgraph binds only the tools it needs. Smaller tool surface =
+// fewer wrong-tool calls + tighter system prompt + faster LLM choice.
+
+export const yieldTools = [getMarketData, getUserPositions, getUserHistory]
+export const migrationTools = [getMarketData, getUserPositions]
+export const alertTools = [setAlert, getAlerts]
