@@ -25,6 +25,7 @@ export interface StrategyIntent {
     risk_level: 'low' | 'medium' | 'high'
   }
   confidence: 'high' | 'medium' | 'low'
+  approvalStatus?: 'pending' | 'approved' | 'rejected' | null
 }
 
 export type AIIntent = LegacyIntent | StrategyIntent

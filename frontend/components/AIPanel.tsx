@@ -13,16 +13,25 @@ interface AIPanelProps {
   onIntentParsed?: (intent: AIIntent) => void
 }
 
+interface PendingInterrupt {
+  question: string
+  details: Record<string, unknown>
+}
+
 export function AIPanel({ onIntentParsed }: AIPanelProps) {
   const { address, isConnected } = useAccount()
   const [message, setMessage] = useState('')
   const [conversationId, setConversationId] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [progressMessage, setProgressMessage] = useState<string | null>(null)
+  const [streamingText, setStreamingText] = useState('')
   const [intent, setIntent] = useState<AIIntent | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [riskConfirmed, setRiskConfirmed] = useState(false)
-  const [showMigrationRiskModal, setShowMigrationRiskModal] = useState(false)
+  // HITL interrupt state
+  const [pendingInterrupt, setPendingInterrupt] = useState<PendingInterrupt | null>(null)
+  const [pendingThreadId, setPendingThreadId] = useState('')
+  // Post-approval bridge state
   const [migrationRiskAccepted, setMigrationRiskAccepted] = useState(false)
   const [bridgeStarted, setBridgeStarted] = useState(false)
   const [bridgeCompleted, setBridgeCompleted] = useState(false)
@@ -37,6 +46,17 @@ export function AIPanel({ onIntentParsed }: AIPanelProps) {
     divest,
   } = useVault()
 
+  const resetState = () => {
+    setError(null)
+    setStreamingText('')
+    setProgressMessage(null)
+    setRiskConfirmed(false)
+    setPendingInterrupt(null)
+    setBridgeStarted(false)
+    setBridgeCompleted(false)
+    setMigrationRiskAccepted(false)
+  }
+
   const runMessage = async (rawMessage: string) => {
     if (!address) {
       setError('Connect wallet to use AI advisor.')
@@ -44,13 +64,9 @@ export function AIPanel({ onIntentParsed }: AIPanelProps) {
     }
 
     setIsLoading(true)
-    setError(null)
+    setIntent(null)
+    resetState()
     setProgressMessage('Connecting to advisor...')
-    setRiskConfirmed(false)
-    setShowMigrationRiskModal(false)
-    setMigrationRiskAccepted(false)
-    setBridgeStarted(false)
-    setBridgeCompleted(false)
 
     try {
       const response = await fetch('/api/chat/stream', {
@@ -60,15 +76,6 @@ export function AIPanel({ onIntentParsed }: AIPanelProps) {
           message: rawMessage,
           user_id: address,
           conversation_id: conversationId,
-          vaultBalances: {
-            ETH: parseFloat(vaultBalanceFormatted) || 0,
-            USDT: parseFloat(vaultUsdtBalanceFormatted) || 0,
-            USDC: parseFloat(vaultUsdtBalanceFormatted) || 0,
-            vaultIdle: parseFloat(vaultTokenHoldingsFormatted) || 0,
-            strategyBalance: parseFloat(strategyBalanceFormatted) || 0,
-            userUsdtBalance: parseFloat(usdtBalanceFormatted) || 0,
-            userUsdcBalance: parseFloat(usdtBalanceFormatted) || 0,
-          },
         }),
       })
 
@@ -83,14 +90,13 @@ export function AIPanel({ onIntentParsed }: AIPanelProps) {
       let parsedIntent: AIIntent | null = null
       let streamConversationId = ''
       let streamError: string | null = null
+      let interrupted = false
 
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
 
         buffer += decoder.decode(value, { stream: true })
-
-        // SSE events are separated by blank lines
         const events = buffer.split('\n\n')
         buffer = events.pop() ?? ''
 
@@ -103,9 +109,18 @@ export function AIPanel({ onIntentParsed }: AIPanelProps) {
               streamConversationId = event.conversation_id
             } else if (event.type === 'progress') {
               setProgressMessage(event.message)
+            } else if (event.type === 'token') {
+              setStreamingText((prev) => prev + event.content)
             } else if (event.type === 'intent') {
               parsedIntent = event.intent
-              streamConversationId = event.conversation_id
+              streamConversationId = event.conversation_id ?? streamConversationId
+            } else if (event.type === 'interrupt') {
+              // Graph paused — show risk modal for approval
+              interrupted = true
+              streamConversationId = event.conversation_id ?? streamConversationId
+              setPendingInterrupt(event.interrupt as PendingInterrupt)
+              setPendingThreadId(streamConversationId)
+              if (streamConversationId) setConversationId(streamConversationId)
             } else if (event.type === 'error') {
               streamError = event.message
             }
@@ -120,6 +135,12 @@ export function AIPanel({ onIntentParsed }: AIPanelProps) {
         return
       }
 
+      if (interrupted) {
+        // isLoading stays true — user must respond to the modal
+        setProgressMessage('Waiting for your approval...')
+        return
+      }
+
       if (!parsedIntent) {
         setError('No response from advisor.')
         return
@@ -127,10 +148,9 @@ export function AIPanel({ onIntentParsed }: AIPanelProps) {
 
       setIntent(parsedIntent)
       if (streamConversationId) setConversationId(streamConversationId)
+      setStreamingText('')
 
       if (isStrategyIntent(parsedIntent)) {
-        // Only treat as error when the agent failed to produce any reasoning text.
-        // action="unknown" with strategy_logic is a valid informational response.
         const hasReasoning = parsedIntent.strategy_logic && parsedIntent.strategy_logic.length > 20
         if (!hasReasoning && (parsedIntent.action === 'unknown' || parsedIntent.confidence === 'low')) {
           setError('The advisor needs a clearer question. Try "should I invest?" or "invest 500 USDT".')
@@ -148,6 +168,47 @@ export function AIPanel({ onIntentParsed }: AIPanelProps) {
     } catch {
       setError('Network error. Please try again.')
     } finally {
+      if (!pendingInterrupt) {
+        setIsLoading(false)
+        setProgressMessage(null)
+      }
+    }
+  }
+
+  // Called when user clicks Approve or Cancel in the risk modal
+  const handleApproval = async (decision: boolean) => {
+    setPendingInterrupt(null)
+    setProgressMessage(decision ? 'Resuming migration...' : 'Cancelling migration...')
+
+    try {
+      const resp = await fetch('/api/chat/resume', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          thread_id: pendingThreadId,
+          user_id: address,
+          decision,
+        }),
+      })
+
+      const data = await resp.json()
+
+      if (!data.success) {
+        setError('Resume failed. Please try again.')
+        return
+      }
+
+      if (data.intent) {
+        const resumedIntent = data.intent as AIIntent
+        setIntent(resumedIntent)
+        if (decision && isStrategyIntent(resumedIntent)) {
+          setMigrationRiskAccepted(true)
+        }
+        onIntentParsed?.(resumedIntent)
+      }
+    } catch {
+      setError('Network error during resume.')
+    } finally {
       setIsLoading(false)
       setProgressMessage(null)
     }
@@ -163,11 +224,6 @@ export function AIPanel({ onIntentParsed }: AIPanelProps) {
     if (intent && isLegacyIntent(intent)) {
       onIntentParsed?.({ ...intent })
     }
-  }
-
-  const handleMigrationRiskAccept = () => {
-    setShowMigrationRiskModal(false)
-    setMigrationRiskAccepted(true)
   }
 
   const handleAdvisorConfirm = async () => {
@@ -191,15 +247,6 @@ export function AIPanel({ onIntentParsed }: AIPanelProps) {
         message: `[SYSTEM] Net APY changed from ${intent.action_data.net_apy.toFixed(2)}% to ${freshNetApy.toFixed(2)}%. Re-evaluate recommendation for user.`,
         user_id: address,
         conversation_id: conversationId,
-        vaultBalances: {
-          ETH: parseFloat(vaultBalanceFormatted) || 0,
-          USDT: parseFloat(vaultUsdtBalanceFormatted) || 0,
-          USDC: parseFloat(vaultUsdtBalanceFormatted) || 0,
-          vaultIdle: parseFloat(vaultTokenHoldingsFormatted) || 0,
-          strategyBalance: parseFloat(strategyBalanceFormatted) || 0,
-          userUsdtBalance: parseFloat(usdtBalanceFormatted) || 0,
-          userUsdcBalance: parseFloat(usdtBalanceFormatted) || 0,
-        },
       }),
     })
 
@@ -277,6 +324,23 @@ export function AIPanel({ onIntentParsed }: AIPanelProps) {
         }}>
           <span style={{ color: 'var(--cyan)' }}>•</span>
           {progressMessage}
+        </div>
+      )}
+
+      {/* Token streaming bubble — visible while subgraph LLM is responding */}
+      {streamingText && !intent && (
+        <div style={{
+          marginTop: 10,
+          background: 'var(--surface-2)',
+          border: '1px solid var(--border)',
+          borderRadius: 10,
+          padding: '0.875rem',
+          fontSize: '0.8rem',
+          lineHeight: 1.55,
+          color: 'var(--text-2)',
+        }}>
+          {streamingText}
+          <span style={{ opacity: 0.5 }}>▊</span>
         </div>
       )}
 
@@ -378,30 +442,36 @@ export function AIPanel({ onIntentParsed }: AIPanelProps) {
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 8 }}>
                 <Field
                   label="Breakeven"
-                  value={intent.action_data.breakeven_days === null || intent.action_data.breakeven_days === undefined ? 'N/A' : `${intent.action_data.breakeven_days.toFixed(1)} days`}
+                  value={intent.action_data.breakeven_days == null ? 'N/A' : `${intent.action_data.breakeven_days.toFixed(1)} days`}
                 />
-                <Field label="Execution" value="Day 12-13" />
+                <Field
+                  label="Status"
+                  value={intent.approvalStatus === 'approved' ? 'APPROVED' : intent.approvalStatus === 'rejected' ? 'REJECTED' : 'PENDING'}
+                  accent={intent.approvalStatus === 'approved' ? 'var(--green)' : intent.approvalStatus === 'rejected' ? 'var(--red)' : 'var(--amber)'}
+                />
               </div>
               <div style={{ fontSize: '0.72rem', color: 'var(--text-2)', marginTop: 10, lineHeight: 1.45 }}>
-                The migration flow is gated behind a bridge risk acknowledgement. After bridging, the product will continue into the Arbitrum vault deposit and invest flow.
+                The migration flow is gated behind a bridge risk acknowledgement. After bridging, the product will continue into the destination vault deposit flow.
               </div>
 
-              <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-                <button
-                  className="btn btn-amber"
-                  style={{ flex: 1 }}
-                  onClick={() => setShowMigrationRiskModal(true)}
-                >
-                  Start Guided Migration
-                </button>
-                <button
-                  className="btn btn-outline"
-                  style={{ flex: 1 }}
-                  onClick={() => setIntent(null)}
-                >
-                  Stay On Base
-                </button>
-              </div>
+              {intent.approvalStatus !== 'approved' && intent.approvalStatus !== 'rejected' && (
+                <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+                  <button
+                    className="btn btn-amber"
+                    style={{ flex: 1 }}
+                    onClick={() => setPendingInterrupt({ question: 'Approve migration?', details: intent.action_data as Record<string, unknown> })}
+                  >
+                    Start Guided Migration
+                  </button>
+                  <button
+                    className="btn btn-outline"
+                    style={{ flex: 1 }}
+                    onClick={() => setIntent(null)}
+                  >
+                    Stay On Base
+                  </button>
+                </div>
+              )}
             </div>
           )}
 
@@ -469,23 +539,26 @@ export function AIPanel({ onIntentParsed }: AIPanelProps) {
             setMessage('')
             setIntent(null)
             setError(null)
+            setStreamingText('')
             setRiskConfirmed(false)
             setConversationId('')
-            setShowMigrationRiskModal(false)
-            setMigrationRiskAccepted(false)
+            setPendingInterrupt(null)
             setBridgeStarted(false)
             setBridgeCompleted(false)
+            setMigrationRiskAccepted(false)
           }}
         >
           Clear
         </button>
       )}
 
-      {showMigrationRiskModal && intent && isStrategyIntent(intent) && intent.action_data.type === 'cross_chain_migrate' && (
+      {/* HITL interrupt modal — triggered by interrupt SSE event or manual "Start Guided Migration" */}
+      {pendingInterrupt && (
         <CrossChainRiskModal
-          amount={intent.action_data.amount}
-          onAccept={handleMigrationRiskAccept}
-          onCancel={() => setShowMigrationRiskModal(false)}
+          amount={Number(pendingInterrupt.details?.amount ?? 0)}
+          interruptDetails={pendingInterrupt.details}
+          onAccept={() => handleApproval(true)}
+          onCancel={() => handleApproval(false)}
         />
       )}
     </div>

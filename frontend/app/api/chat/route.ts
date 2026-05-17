@@ -42,9 +42,22 @@ export async function POST(request: NextRequest) {
       }
     )
 
+    // LangGraph surfaces interrupt() calls in result.__interrupt__ — an array
+    // of { value, when } objects. Surface the first one to the client so it
+    // can prompt for human approval and then POST /api/chat/resume.
+    if (result.__interrupt__?.length) {
+      return NextResponse.json({
+        success: true,
+        interrupted: true,
+        interrupt: result.__interrupt__[0].value,
+        conversation_id: thread_id,
+      })
+    }
+
     return NextResponse.json({
       success: true,
       intent: result.intent,
+      approvalStatus: result.approvalStatus,
       conversation_id: thread_id,
       mode: 'agent',
     })

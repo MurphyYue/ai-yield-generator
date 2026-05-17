@@ -1,20 +1,10 @@
-import { StateGraph, START, END } from '@langchain/langgraph'
+import { StateGraph, START, END, interrupt } from '@langchain/langgraph'
 import { ToolNode } from '@langchain/langgraph/prebuilt'
 import { AIMessage, SystemMessage } from '@langchain/core/messages'
 import { AgentState, type AgentStateType } from '../state'
 import { migrationTools } from '../tools'
 import { MIGRATION_PROMPT } from '../prompts'
 import { chatLlm, renderMemoryFacts } from './_shared'
-
-// Cross-chain migration specialist subgraph.
-// ReAct loop ending in approvalGate. The gate runs only when the LLM has
-// produced a final answer with a cross_chain_migrate intent — otherwise it
-// is a no-op pass-through.
-//
-// Day 21 STUB: approvalGate sets approvalStatus: 'pending' and returns.
-// Day 22 will replace this body with `interrupt()` that genuinely pauses
-// the graph, surfaces the action_data to the client, and resumes via
-// Command({ resume: boolean }) into approved/rejected.
 
 const llm = chatLlm().bindTools(migrationTools)
 
@@ -35,17 +25,39 @@ function afterAgent(state: AgentStateType): 'tools' | 'approvalGate' {
   return last.tool_calls && last.tool_calls.length > 0 ? 'tools' : 'approvalGate'
 }
 
-// Day 21 stub — flags pending without truly pausing. Day 22 replaces this
-// function body with an `interrupt({ question, details })` call.
+// Genuine HITL gate for cross-chain migration.
+// interrupt() checkpoints the graph and pauses until the client POSTs
+// Command({ resume: true|false }) to /api/chat/resume.
+// For non-migration intents this node is a no-op pass-through.
 async function approvalGate(state: AgentStateType): Promise<Partial<AgentStateType>> {
-  // The actual intent JSON is parsed downstream by formatIntent; for now we
-  // only flag pending approval if the agent's final message looks like a
-  // migration intent. The stricter parse happens in the parent graph's
-  // formatIntent (or in Day 22 by reading state.intent).
   const last = state.messages[state.messages.length - 1] as AIMessage
   const content = typeof last.content === 'string' ? last.content : ''
-  const looksLikeMigration = /cross_chain_migrate/i.test(content)
-  return looksLikeMigration ? { approvalStatus: 'pending' as const } : {}
+  if (!/cross_chain_migrate/i.test(content)) return {}
+
+  // Parse action_data out of the pending intent JSON for the modal payload.
+  // formatIntent runs after us in the parent graph, so we do a lightweight
+  // extract here — only what the risk modal needs.
+  let actionData: Record<string, unknown> = {}
+  try {
+    const cleaned = content
+      .replace(/^```(?:json)?\s*/im, '')
+      .replace(/```\s*$/im, '')
+      .trim()
+    const parsed = JSON.parse(cleaned)
+    actionData = parsed.action_data ?? {}
+  } catch {
+    // best-effort; modal degrades gracefully with empty details
+  }
+
+  // Graph pauses here. The resume value is the boolean the client sends back.
+  const decision = interrupt({
+    question: 'Approve cross-chain migration?',
+    details: actionData,
+  }) as boolean
+
+  return {
+    approvalStatus: decision ? ('approved' as const) : ('rejected' as const),
+  }
 }
 
 export const migrationSubgraph = new StateGraph(AgentState)
