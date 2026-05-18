@@ -23,8 +23,8 @@ const routeSchema = z.object({
 const routerLlm = new ChatOpenAI({
   model: process.env.OPENAI_API_MODEL || 'gpt-5.2',
   temperature: 0,
-  apiKey: process.env.OPENAI_EMBEDDINGS_API_KEY,
-  configuration: { baseURL: process.env.OPENAI_EMBEDDINGS_API_BASE_URL },
+  apiKey: process.env.OPENAI_API_KEY,
+  configuration: { baseURL: process.env.OPENAI_API_BASE_URL },
 }).withStructuredOutput(routeSchema, { name: 'route' })
 
 export async function routerNode(state: AgentStateType): Promise<Partial<AgentStateType>> {

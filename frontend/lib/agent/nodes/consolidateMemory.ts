@@ -32,8 +32,8 @@ const extractionSchema = z.object({
 const extractorLlm = new ChatOpenAI({
   model: 'gpt-4o-mini',
   temperature: 0,
-  apiKey: process.env.OPENAI_EMBEDDINGS_API_KEY,
-  configuration: { baseURL: process.env.OPENAI_EMBEDDINGS_API_BASE_URL },
+  apiKey: process.env.OPENAI_API_KEY,
+  configuration: { baseURL: process.env.OPENAI_API_BASE_URL },
 }).withStructuredOutput(extractionSchema, { name: 'memory_update' })
 
 function formatMessages(messages: BaseMessage[]): string {
