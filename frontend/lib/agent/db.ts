@@ -39,11 +39,25 @@ export async function setupTables(): Promise<void> {
       last_message_at TIMESTAMP NOT NULL DEFAULT NOW()
     );
 
+    CREATE TABLE IF NOT EXISTS user_sessions (
+      session_id    TEXT        PRIMARY KEY,
+      user_address  TEXT        NOT NULL,
+      created_at    TIMESTAMP   NOT NULL DEFAULT NOW(),
+      last_seen_at  TIMESTAMP   NOT NULL DEFAULT NOW(),
+      ip            TEXT,
+      user_agent    TEXT,
+      revoked_at    TIMESTAMP
+    );
+
     CREATE INDEX IF NOT EXISTS idx_alerts_user
       ON alerts(user_address, active);
 
     CREATE INDEX IF NOT EXISTS idx_conversations_user
       ON conversations(user_address);
+
+    CREATE INDEX IF NOT EXISTS idx_user_sessions_user_active
+      ON user_sessions(user_address)
+      WHERE revoked_at IS NULL;
   `)
 }
 

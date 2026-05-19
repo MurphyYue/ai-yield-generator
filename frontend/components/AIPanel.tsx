@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useAccount } from 'wagmi'
 import { useVault } from '@/hooks/useVault'
 import { AIIntent, isLegacyIntent, isStrategyIntent, StrategyIntent } from '@/lib/ai-intent'
@@ -46,6 +46,36 @@ export function AIPanel({ onIntentParsed }: AIPanelProps) {
     divest,
   } = useVault()
 
+  // On mount: restore active thread_id and re-surface interrupt modal if needed
+  useEffect(() => {
+    if (!address) return
+
+    async function restoreSession() {
+      try {
+        const convResp = await fetch('/api/chat/conversation')
+        if (!convResp.ok) return
+        const { thread_id } = await convResp.json()
+        if (!thread_id) return
+
+        setConversationId(thread_id)
+
+        const statusResp = await fetch(`/api/chat/status?thread_id=${thread_id}`)
+        if (!statusResp.ok) return
+        const { interrupted, interrupt } = await statusResp.json()
+        if (interrupted && interrupt) {
+          setPendingInterrupt(interrupt as PendingInterrupt)
+          setPendingThreadId(thread_id)
+          setIsLoading(true)
+          setProgressMessage('Waiting for your approval...')
+        }
+      } catch {
+        // session restore is best-effort — silently ignore errors
+      }
+    }
+
+    restoreSession()
+  }, [address])
+
   const resetState = () => {
     setError(null)
     setStreamingText('')
@@ -74,7 +104,6 @@ export function AIPanel({ onIntentParsed }: AIPanelProps) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           message: rawMessage,
-          user_id: address,
           conversation_id: conversationId,
         }),
       })
@@ -147,7 +176,15 @@ export function AIPanel({ onIntentParsed }: AIPanelProps) {
       }
 
       setIntent(parsedIntent)
-      if (streamConversationId) setConversationId(streamConversationId)
+      if (streamConversationId) {
+        setConversationId(streamConversationId)
+        // Persist thread so it survives tab close / page refresh
+        void fetch('/api/chat/conversation', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ thread_id: streamConversationId }),
+        })
+      }
       setStreamingText('')
 
       if (isStrategyIntent(parsedIntent)) {
@@ -186,7 +223,6 @@ export function AIPanel({ onIntentParsed }: AIPanelProps) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           thread_id: pendingThreadId,
-          user_id: address,
           decision,
         }),
       })
@@ -245,7 +281,6 @@ export function AIPanel({ onIntentParsed }: AIPanelProps) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         message: `[SYSTEM] Net APY changed from ${intent.action_data.net_apy.toFixed(2)}% to ${freshNetApy.toFixed(2)}%. Re-evaluate recommendation for user.`,
-        user_id: address,
         conversation_id: conversationId,
       }),
     })

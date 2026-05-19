@@ -1,29 +1,27 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { HumanMessage } from '@langchain/core/messages'
 import { getAgent } from '@/lib/agent/graph'
+import { requireAuthenticatedAddress } from '@/lib/auth'
 import { randomUUID } from 'crypto'
 
 interface ChatRequest {
   message: string
-  user_id?: string
   conversation_id?: string
-  // vaultBalances kept for backwards compatibility — agent fetches data via tools
-  vaultBalances?: Record<string, unknown>
 }
 
 export async function POST(request: NextRequest) {
+  let userAddress: string
   try {
-    const { message, user_id, conversation_id }: ChatRequest = await request.json()
+    userAddress = await requireAuthenticatedAddress(request)
+  } catch (resp) {
+    return resp as Response
+  }
+
+  try {
+    const { message, conversation_id }: ChatRequest = await request.json()
 
     if (!message || typeof message !== 'string') {
       return NextResponse.json({ error: 'Message is required' }, { status: 400 })
-    }
-
-    if (!user_id || typeof user_id !== 'string') {
-      return NextResponse.json(
-        { error: 'Wallet connection is required for AI advisor usage' },
-        { status: 400 }
-      )
     }
 
     const agent = await getAgent()
@@ -32,19 +30,16 @@ export async function POST(request: NextRequest) {
     const result = await agent.invoke(
       {
         messages: [new HumanMessage(message)],
-        userId: user_id,
+        userId: userAddress,
       },
       {
         configurable: {
           thread_id,
-          user_id,
+          user_id: userAddress,
         },
       }
     )
 
-    // LangGraph surfaces interrupt() calls in result.__interrupt__ — an array
-    // of { value, when } objects. Surface the first one to the client so it
-    // can prompt for human approval and then POST /api/chat/resume.
     if (result.__interrupt__?.length) {
       return NextResponse.json({
         success: true,
@@ -77,3 +72,4 @@ export async function OPTIONS() {
     },
   })
 }
+

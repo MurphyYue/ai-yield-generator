@@ -1,11 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { Command } from '@langchain/langgraph'
 import { getAgent } from '@/lib/agent/graph'
+import { requireAuthenticatedAddress } from '@/lib/auth'
 
 export async function POST(request: NextRequest) {
+  let userAddress: string
+  try {
+    userAddress = await requireAuthenticatedAddress(request)
+  } catch (resp) {
+    return resp as Response
+  }
+
   try {
     const body = await request.json()
-    const { thread_id, user_id, decision } = body
+    const { thread_id, decision } = body
 
     if (!thread_id || typeof decision !== 'boolean') {
       return NextResponse.json(
@@ -16,11 +24,8 @@ export async function POST(request: NextRequest) {
 
     const agent = await getAgent()
 
-    // Resume the interrupted graph with the user's approval/rejection.
-    // Command({ resume }) re-enters approvalGate; interrupt() returns the
-    // resume value as its return, so the node continues from that point.
     const result = await agent.invoke(new Command({ resume: decision }), {
-      configurable: { thread_id, user_id: user_id ?? '' },
+      configurable: { thread_id, user_id: userAddress },
     })
 
     return NextResponse.json({
@@ -34,3 +39,4 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }
+

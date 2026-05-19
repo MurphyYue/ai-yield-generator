@@ -1,11 +1,11 @@
 import { NextRequest } from 'next/server'
 import { HumanMessage } from '@langchain/core/messages'
 import { getAgent } from '@/lib/agent/graph'
+import { requireAuthenticatedAddress } from '@/lib/auth'
 import { randomUUID } from 'crypto'
 
 interface ChatRequest {
   message: string
-  user_id?: string
   conversation_id?: string
 }
 
@@ -27,10 +27,17 @@ const NODE_PROGRESS: Record<string, string> = {
 const SILENT_NODES = new Set(['consolidateMemory', 'router', 'loadMemory', 'fetchMarket', 'checkAlerts'])
 
 export async function POST(request: NextRequest) {
-  const { message, user_id, conversation_id }: ChatRequest = await request.json()
+  let userAddress: string
+  try {
+    userAddress = await requireAuthenticatedAddress(request)
+  } catch (resp) {
+    return resp as Response
+  }
 
-  if (!message || !user_id) {
-    return new Response('Message and user_id required', { status: 400 })
+  const { message, conversation_id }: ChatRequest = await request.json()
+
+  if (!message) {
+    return new Response('Message required', { status: 400 })
   }
 
   const agent = await getAgent()
@@ -54,10 +61,10 @@ export async function POST(request: NextRequest) {
         const events = agent.streamEvents(
           {
             messages: [new HumanMessage(message)],
-            userId: user_id,
+            userId: userAddress,
           },
           {
-            configurable: { thread_id, user_id },
+            configurable: { thread_id, user_id: userAddress },
             version: 'v2',
           }
         )
