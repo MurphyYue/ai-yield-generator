@@ -6,7 +6,7 @@ import { getDb } from '@/lib/agent/db'
 // Revokes a specific session. Ownership enforced — users can only revoke their own sessions.
 export async function POST(
   req: NextRequest,
-  { params }: { params: { session_id: string } }
+  { params }: { params: Promise<{ session_id: string }> }
 ) {
   let userAddress: string
   try {
@@ -15,7 +15,7 @@ export async function POST(
     return resp as Response
   }
 
-  const { session_id } = params
+  const { session_id } = await params
 
   const result = await getDb().query(
     `UPDATE user_sessions

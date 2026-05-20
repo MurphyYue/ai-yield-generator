@@ -2,7 +2,8 @@ import { NextRequest } from 'next/server'
 import { getServerSession, type NextAuthOptions } from 'next-auth'
 import CredentialsProvider from 'next-auth/providers/credentials'
 import { getCsrfToken } from 'next-auth/react'
-import { SiweMessage } from 'siwe'
+import { parseSiweMessage, validateSiweMessage } from 'viem/siwe'
+import { recoverMessageAddress } from 'viem'
 import { getDb } from '@/lib/agent/db'
 import { randomUUID } from 'crypto'
 
@@ -32,22 +33,28 @@ export const authOptions: NextAuthOptions = {
       async authorize(credentials, req) {
         if (!credentials?.message || !credentials?.signature) return null
 
-        const siweMessage = new SiweMessage(JSON.parse(credentials.message))
+        const message = parseSiweMessage(credentials.message)
         const nonce = await getCsrfToken({ req: { headers: req.headers } })
 
-        const result = await siweMessage.verify({
-          signature: credentials.signature,
+        const valid = validateSiweMessage({
+          message,
           nonce,
           domain: new URL(process.env.NEXTAUTH_URL!).host,
-          time: new Date().toISOString(),
+          time: new Date(),
         })
-
-        if (!result.success) return null
+        if (!valid) return null
 
         // Only allow Base (8453) and Arbitrum (42161)
-        if (![8453, 42161].includes(siweMessage.chainId)) return null
+        if (!message.chainId || ![8453, 42161].includes(message.chainId)) return null
 
-        return { id: siweMessage.address }
+        // Verify the signature recovers to the claimed address
+        const recovered = await recoverMessageAddress({
+          message: credentials.message,
+          signature: credentials.signature as `0x${string}`,
+        })
+        if (recovered.toLowerCase() !== message.address?.toLowerCase()) return null
+
+        return { id: message.address! }
       },
     }),
   ],
