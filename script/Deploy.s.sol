@@ -23,10 +23,10 @@ contract DeployScript is Script {
     address constant USDC_ARBITRUM = 0xaf88d065e77c8cC2239327C5EDb3A432268e5831;
 
     function run() external {
-        // Supports both PRIVATE_KEY (Sepolia) and DEPLOYER_PRIVATE_KEY (Anvil)
+        // Supports both PRIVATE_KEY (Sepolia) and ANVIL_PRIVATE_KEY (Anvil)
         uint256 deployerPrivateKey = vm.envOr("PRIVATE_KEY", uint256(0));
         if (deployerPrivateKey == 0) {
-            deployerPrivateKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
+            deployerPrivateKey = vm.envUint("ANVIL_PRIVATE_KEY");
         }
         address deployer = vm.addr(deployerPrivateKey);
         uint256 chainId = block.chainid;

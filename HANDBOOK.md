@@ -597,7 +597,7 @@ Only needed if you intend to redeploy contracts. Not part of the runtime stack.
 | `PRIVATE_KEY` | Forge deployer wallet |
 | `BASE_RPC_URL` / `ARBITRUM_RPC_URL` | Forge `--rpc-url` |
 | `BASESCAN_API_KEY` / `ARBISCAN_API_KEY` | Forge `--verify` |
-| `DEPLOYER_PRIVATE_KEY`, `SEPOLIA_RPC_URL`, etc. | Legacy testnet deploys |
+| `ANVIL_PRIVATE_KEY`, `SEPOLIA_RPC_URL`, etc. | Legacy testnet deploys |
 
 ---
 
