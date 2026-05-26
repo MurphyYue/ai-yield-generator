@@ -87,7 +87,7 @@ Grouped by: Smart Contracts / Frontend / Backend / Tests / Config / Documentatio
 - Every architectural claim is backed by an actual file or code snippet
 - Statistics are counted from real files (use `grep -c` or `wc -l` if needed)
 - Problems section only includes problems that actually happened (check conversation history or git log)
-- Key learnings connect to real web3 architect interview topics
+- Key learnings connect to real Senior Web3 Full-stack Engineer interview topics
 - Tone matches existing reports: direct, technical, no fluff
 
 ### 5) Write the File

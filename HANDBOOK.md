@@ -334,15 +334,22 @@ forge test --match-path test/ForkBase.t.sol --fork-url $BASE_RPC_URL -vv
 forge test --match-path test/ForkArbitrum.t.sol --fork-url $ARBITRUM_RPC_URL -vv
 
 # Deploy (only if redeploying — usually you don't)
-forge script script/Deploy.s.sol \
+# Base:
+forge script script/Deploy.s.sol:DeployScript \
   --rpc-url $BASE_RPC_URL \
   --broadcast --verify \
   --etherscan-api-key $BASESCAN_API_KEY
+
+# Arbitrum:
+forge script script/Deploy.s.sol:DeployScript \
+  --rpc-url $ARBITRUM_RPC_URL \
+  --broadcast --verify \
+  --etherscan-api-key $ARBISCAN_API_KEY
 ```
 
 If you redeploy:
-1. Update `NEXT_PUBLIC_BASE_VAULT_ADDRESS` (or arbitrum) in `frontend/.env.local`
-2. Update `ponder-indexing/ponder.config.ts` (`contracts.VaultV3.address` and `startBlock`)
+1. Update `NEXT_PUBLIC_BASE_VAULT_ADDRESS` and/or `NEXT_PUBLIC_ARBITRUM_VAULT_ADDRESS` in `frontend/.env.local`
+2. Update `ponder-indexing/ponder.config.ts` for both Base and Arbitrum (`contracts.*.address` and `startBlock`)
 3. Wipe Ponder's indexed data: `docker exec vault-postgres psql -U vault -d vault -c "DROP TABLE IF EXISTS _ponder_meta, _ponder_checkpoint, _reorg__vault_activity, vault_activity CASCADE;"` then restart Ponder
 
 ---
