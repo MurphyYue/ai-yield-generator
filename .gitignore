@@ -10,11 +10,12 @@ Thumbs.db
 # Node modules (for frontend)
 node_modules/
 
-# Environment files (keep .env.example, ignore .env)
+# Environment files — only .env.example is safe to commit
+.env
 .env.local
 .env.*.local
 .env/*
-.env
+!.env.example
 
 # IDE files
 .vscode/

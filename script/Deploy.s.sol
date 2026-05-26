@@ -23,15 +23,12 @@ contract DeployScript is Script {
     address constant USDC_ARBITRUM = 0xaf88d065e77c8cC2239327C5EDb3A432268e5831;
 
     function run() external {
-        // Supports both PRIVATE_KEY (Sepolia) and ANVIL_PRIVATE_KEY (Anvil)
-        uint256 deployerPrivateKey = vm.envOr("PRIVATE_KEY", uint256(0));
-        if (deployerPrivateKey == 0) {
-            deployerPrivateKey = vm.envUint("ANVIL_PRIVATE_KEY");
-        }
-        address deployer = vm.addr(deployerPrivateKey);
+        // Key is injected by Foundry from --account <keystore> at CLI level.
+        // Never read PRIVATE_KEY from env — use: forge script ... --account my_deployer_account
+        address deployer = msg.sender;
         uint256 chainId = block.chainid;
 
-        vm.startBroadcast(deployerPrivateKey);
+        vm.startBroadcast();
 
         // 1. Deploy VaultV3
         VaultV3 vault = new VaultV3();
