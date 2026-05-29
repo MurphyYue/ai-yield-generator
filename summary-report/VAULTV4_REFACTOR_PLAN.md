@@ -41,25 +41,34 @@ mapping(address => mapping(address => uint256)) public shares;
 
 // totalShares[token] — total shares outstanding for a given token
 mapping(address => uint256) public totalShares;
+```
 
-// totalDeposited[token] — sum of all principal deposited (used for deposit cap)
-mapping(address => uint256) public totalDeposited;
+**`_totalAssets(token)` internal function**
+
+USDC and aUSDC are different tokens, but Aave V3 aTokens are rebasing: 1 aUSDC is always redeemable for exactly 1 USDC (yield accrues by the aUSDC balance growing, not by an exchange rate). This means idle USDC and aUSDC balance are in the same unit and can be summed directly.
+
+`IStrategy.totalAssets()` is defined to always return the underlying token amount — any future strategy (e.g. Compound) must handle its own exchange-rate conversion internally before returning. The vault never needs to know the strategy's internal token.
+
+```solidity
+function _totalAssets(address token) internal view returns (uint256) {
+    uint256 idle = IERC20(token).balanceOf(address(this));
+    if (address(strategy) != address(0) && strategy.underlyingToken() == token) {
+        return idle + strategy.totalAssets();
+    }
+    return idle;
+}
 ```
 
 **Exchange rate formula**
 
 ```
-assetsPerShare = totalAssets(token) / totalShares[token]
-
 // On deposit:
-sharesToMint = amount * totalShares[token] / totalAssets(token)
-// (if totalShares == 0: sharesToMint = amount, bootstraps the rate at 1:1)
+sharesToMint = amount * totalShares[token] / _totalAssets(token)
+// (if totalShares == 0: first deposit — see inflation protection below)
 
 // On withdrawal:
-assetsToSend = sharesToBurn * totalAssets(token) / totalShares[token]
+assetsToSend = sharesToBurn * _totalAssets(token) / totalShares[token]
 ```
-
-`totalAssets(token)` = `IERC20(token).balanceOf(address(this))` + `strategy.totalAssets()` (if strategy token matches).
 
 **Inflation attack protection (V-02)**
 
@@ -82,7 +91,7 @@ function depositToken(address token, uint256 amount) external nonReentrant whenN
     uint256 sharesToMint;
     if (supply == 0) {
         sharesToMint = amount * VIRTUAL_SHARES;
-        shares[token][address(0)] += VIRTUAL_SHARES; // dead shares
+        shares[token][address(0)] += VIRTUAL_SHARES; // dead shares — inflation protection
         totalShares[token] += VIRTUAL_SHARES;
     } else {
         sharesToMint = (amount * supply) / assets;
@@ -92,7 +101,6 @@ function depositToken(address token, uint256 amount) external nonReentrant whenN
     IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
     shares[token][msg.sender] += sharesToMint;
     totalShares[token] += sharesToMint;
-    totalDeposited[token] += amount;
 
     emit TokenDeposited(msg.sender, token, amount, sharesToMint);
 }
@@ -125,6 +133,10 @@ function previewWithdraw(address token, address user) external view returns (uin
 
 // How many shares a deposit of `amount` would mint right now
 function previewDeposit(address token, uint256 amount) external view returns (uint256 sharesToMint);
+
+// Convert a token amount to the equivalent share count at the current exchange rate
+// Frontend calls this before withdrawToken() to convert "I want 100 USDC" → shares to burn
+function convertToShares(address token, uint256 assets) external view returns (uint256 sharesToBurn);
 
 // User's share balance
 function getShares(address token, address user) external view returns (uint256);
@@ -223,9 +235,11 @@ function setDepositCap(address token, uint256 cap) external onlyRole(TREASURER_R
 In `depositToken()`, add:
 ```solidity
 if (depositCap[token] > 0) {
-    require(totalDeposited[token] + amount <= depositCap[token], "Deposit cap reached");
+    require(_totalAssets(token) + amount <= depositCap[token], "Deposit cap reached");
 }
 ```
+
+`_totalAssets(token)` is used instead of a `totalDeposited` counter because `totalDeposited` would only track principal — it would never decrease on withdrawal and never reflect yield, causing it to drift from the real TVL and incorrectly block new deposits. `_totalAssets` always reflects the current vault TVL.
 
 ---
 
@@ -262,7 +276,7 @@ The existing `VaultV3.t.sol` tests cover roles, pause, blacklist, ETH deposit/wi
 
 | Test | What it covers |
 |---|---|
-| `testDepositMintsShares` | First deposit mints shares at 1:1 (minus dead shares) |
+| `testDepositMintsShares` | First deposit mints `amount * 1000` shares; 1000 dead shares locked to `address(0)` |
 | `testShareValueGrowsWithYield` | After simulated yield, `previewWithdraw` returns more than deposited |
 | `testWithdrawBurnsCorrectShares` | Shares decrease proportionally on withdrawal |
 | `testTwoUsersShareYieldProportionally` | User A deposits 100, User B deposits 100, yield of 10 → each gets 5 |
@@ -288,7 +302,8 @@ The existing `VaultV3.t.sol` tests cover roles, pause, blacklist, ETH deposit/wi
 | `test/VaultV4.t.sol` | Create — new test suite (VaultV3.t.sol stays untouched) |
 | `script/Deploy.s.sol` | Update to deploy VaultV4 instead of VaultV3 |
 | `DEPLOYED_ADDRESSES.md` | Update after redeployment |
-| `frontend/lib/vault.ts` | Update ABI import to VaultV4 |
+| `frontend/lib/vault.ts` | Update ABI: replace `tokenBalances`, `getTokenBalance` with `shares`, `getShares`, `previewWithdraw`, `previewDeposit`, `convertToShares`; update `withdrawToken` and `divest` signatures |
+| `frontend/hooks/useVault.ts` | Update `withdrawUsdt` and `simulateWithdrawUsdt` to call `convertToShares` first, then pass share count to `withdrawToken` |
 | `ponder-indexing/ponder.config.ts` | Update contract address + startBlock |
 
 `AaveStrategy.sol` and `IStrategy.sol` require **no changes**.
