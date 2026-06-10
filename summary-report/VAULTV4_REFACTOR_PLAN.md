@@ -1,53 +1,96 @@
 # VaultV4 Refactor Plan
 
-**Source**: `VAULTV3_ISSUES_REPORT.md`
-**Target file**: `contracts/VaultV4.sol`
+**Source**: `VAULTV3_ISSUES_REPORT.md`  
+**Target file**: `contracts/VaultV4.sol`  
 **Test file**: `test/VaultV4.t.sol`
 
 ---
 
-## Why a new file, not a patch
+## Why `VaultV4` is a new file
 
-The ERC-4626 change is storage-breaking. `tokenBalances[token][user]` is replaced by a shares mapping with a completely different semantic. Existing mainnet depositors on VaultV3 would need to migrate. A new contract file makes the versioning explicit, keeps VaultV3 as a reference, and follows standard DeFi practice (Aave V2→V3, Uniswap V2→V3).
+The ERC20 accounting change is storage-breaking. `VaultV3` tracks user ERC20 balances as principal, while `VaultV4` will track user ownership through shares with yield-aware accounting. That is a semantic rewrite, not a safe in-place patch.
+
+`VaultV3` remains in the repo as a legacy reference. `VaultV4` is the intended replacement contract for any future deployment path.
+
+This project validates behavior against:
+
+- local Anvil
+- Base mainnet fork
+- Arbitrum mainnet fork
+- and, if accepted, clean redeployments on real mainnet environments
+
+So the design target is not only local correctness. `VaultV4` must remain compatible with live Aave-based strategy behavior on Base and Arbitrum.
+
+---
+
+## Why migration is not required
+
+Migration logic is intentionally out of scope.
+
+Reason:
+
+- `VaultV3` has no real production users
+- there is no live user base whose balances must be migrated
+- there is no need for a migration contract, migration script, or dual-version coexistence flow
+
+The practical deployment strategy is therefore:
+
+1. write `VaultV4`
+2. test locally
+3. test on Base and Arbitrum mainnet forks
+4. redeploy cleanly if the design is accepted
+
+This keeps the refactor focused on correctness and avoids adding migration complexity that the current project state does not need.
 
 ---
 
 ## What stays the same
 
-- All four roles: `DEFAULT_ADMIN_ROLE`, `MANAGER_ROLE`, `OPERATOR_ROLE`, `TREASURER_ROLE`
-- ETH deposit/withdraw (unchanged — ETH is not yield-bearing in this vault)
-- Blacklist, pause/unpause
-- Strategy interface (`IStrategy`, `AaveStrategy` — no changes needed)
-- `invest()` / `divest()` / `emergencyDivest()` — logic preserved, modifiers added
-- `setStrategy()`, `getTotalBalance()`, `getStrategyBalance()`
+- All four roles:
+  - `DEFAULT_ADMIN_ROLE`
+  - `MANAGER_ROLE`
+  - `OPERATOR_ROLE`
+  - `TREASURER_ROLE`
+- ETH deposit/withdraw path remains unchanged
+- Existing ETH withdrawal fee model remains unchanged
+- Blacklist
+- Pause/unpause
+- Strategy interface:
+  - `IStrategy`
+  - `AaveStrategy`
+- `invest()` / `divest()` / `emergencyDivest()` remain the strategy-control surface, though modifiers and parameters change
+- `setStrategy()`
+- `getTotalBalance()`
+- `getStrategyBalance()`
+
+The major redesign is isolated to ERC20 accounting, operational safety fixes, and platform revenue capture from yield.
 
 ---
 
 ## Changes by issue ID
 
-### V-01 + V-02 — ERC-4626 share accounting (replaces `tokenBalances`)
+### V-01 + V-02 — Replace principal accounting with share accounting
 
-This is the core change. Everything else is additive.
+Remove:
 
-**Remove**
 ```solidity
 mapping(address => mapping(address => uint256)) public tokenBalances;
 ```
 
-**Add**
-```solidity
-// shares[token][user] — how many shares the user holds for a given token
-mapping(address => mapping(address => uint256)) public shares;
+Add:
 
-// totalShares[token] — total shares outstanding for a given token
+```solidity
+mapping(address => mapping(address => uint256)) public shares;
 mapping(address => uint256) public totalShares;
 ```
 
-**`_totalAssets(token)` internal function**
+Core accounting model:
 
-USDC and aUSDC are different tokens, but Aave V3 aTokens are rebasing: 1 aUSDC is always redeemable for exactly 1 USDC (yield accrues by the aUSDC balance growing, not by an exchange rate). This means idle USDC and aUSDC balance are in the same unit and can be summed directly.
+- ERC20 depositors own shares, not principal balances
+- Yield accrues by increasing the asset value per share
+- Users withdraw by burning shares for the proportional fraction of total assets
 
-`IStrategy.totalAssets()` is defined to always return the underlying token amount — any future strategy (e.g. Compound) must handle its own exchange-rate conversion internally before returning. The vault never needs to know the strategy's internal token.
+Internal total-assets helper:
 
 ```solidity
 function _totalAssets(address token) internal view returns (uint256) {
@@ -59,238 +102,319 @@ function _totalAssets(address token) internal view returns (uint256) {
 }
 ```
 
-**Exchange rate formula**
+Exchange rate formulas:
 
-```
-// On deposit:
+```text
+On deposit:
 sharesToMint = amount * totalShares[token] / _totalAssets(token)
-// (if totalShares == 0: first deposit — see inflation protection below)
 
-// On withdrawal:
+On withdrawal:
 assetsToSend = sharesToBurn * _totalAssets(token) / totalShares[token]
 ```
 
-**Inflation attack protection (V-02)**
+Inflation attack protection is mandatory in the same implementation pass:
 
-On the very first deposit (totalShares == 0), mint `amount * VIRTUAL_SHARES` shares and permanently lock `VIRTUAL_SHARES` of them to `address(0)`. This makes the cost of the inflation attack proportional to `VIRTUAL_SHARES`, which is set high enough to be economically infeasible.
+- use dead-share protection on first deposit
+- lock `VIRTUAL_SHARES` to `address(0)`
+- mint first depositor shares at `amount * VIRTUAL_SHARES`
 
-```solidity
-uint256 private constant VIRTUAL_SHARES = 1e3; // 1000 dead shares on first deposit
-```
-
-Alternatively, use OpenZeppelin's ERC-4626 `_decimalsOffset()` virtual offset if inheriting from their base. Either approach is acceptable.
-
-**Updated `depositToken()`**
-```solidity
-function depositToken(address token, uint256 amount) external nonReentrant whenNotPaused {
-    // existing checks: amount > 0, token != 0, not blacklisted, deposit cap
-
-    uint256 supply = totalShares[token];
-    uint256 assets = _totalAssets(token);
-
-    uint256 sharesToMint;
-    if (supply == 0) {
-        sharesToMint = amount * VIRTUAL_SHARES;
-        shares[token][address(0)] += VIRTUAL_SHARES; // dead shares — inflation protection
-        totalShares[token] += VIRTUAL_SHARES;
-    } else {
-        sharesToMint = (amount * supply) / assets;
-    }
-    require(sharesToMint > 0, "Zero shares minted");
-
-    IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
-    shares[token][msg.sender] += sharesToMint;
-    totalShares[token] += sharesToMint;
-
-    emit TokenDeposited(msg.sender, token, amount, sharesToMint);
-}
-```
-
-**Updated `withdrawToken()`**
-```solidity
-function withdrawToken(address token, uint256 sharesToBurn) external nonReentrant whenNotPaused {
-    require(sharesToBurn > 0, "Amount must be > 0");
-    require(shares[token][msg.sender] >= sharesToBurn, "Insufficient shares");
-    require(!blacklisted[msg.sender], "Address is blacklisted");
-
-    uint256 assets = (sharesToBurn * _totalAssets(token)) / totalShares[token];
-    require(IERC20(token).balanceOf(address(this)) >= assets, "Insufficient vault liquidity — divest first");
-
-    shares[token][msg.sender] -= sharesToBurn;
-    totalShares[token] -= sharesToBurn;
-
-    IERC20(token).safeTransfer(msg.sender, assets);
-    emit TokenWithdrawn(msg.sender, token, assets, sharesToBurn);
-}
-```
-
-Note: if funds are currently deployed in Aave, the vault's idle balance may be less than `assets`. The error message tells the operator to call `divest()` first. This is intentional — it keeps the withdrawal path simple and avoids auto-divesting on every user withdrawal.
-
-**New view functions**
-```solidity
-// How many tokens a user's shares are currently worth
-function previewWithdraw(address token, address user) external view returns (uint256 assets);
-
-// How many shares a deposit of `amount` would mint right now
-function previewDeposit(address token, uint256 amount) external view returns (uint256 sharesToMint);
-
-// Convert a token amount to the equivalent share count at the current exchange rate
-// Frontend calls this before withdrawToken() to convert "I want 100 USDC" → shares to burn
-function convertToShares(address token, uint256 assets) external view returns (uint256 sharesToBurn);
-
-// User's share balance
-function getShares(address token, address user) external view returns (uint256);
-```
-
----
-
-### V-03 — Large withdrawal hash: replace `block.timestamp` with nonce
-
-**Remove**: `block.timestamp` from hash computation.
-
-**Add**:
-```solidity
-mapping(address => uint256) public withdrawalNonce; // per-user nonce
-```
-
-**New flow**:
-1. User calls `requestLargeWithdrawal(amount)` → increments their nonce, emits `LargeWithdrawalRequested(user, amount, nonce)`
-2. Treasurer calls `approveLargeWithdrawal(user, amount, nonce)` → stores approval keyed by `keccak256(user, amount, nonce)`
-3. User calls `withdraw(amount)` → recomputes hash with their current nonce, checks approval, deletes it, increments nonce
+Locked choice:
 
 ```solidity
-// New request function (called by user)
-function requestLargeWithdrawal(uint256 amount) external {
-    uint256 nonce = withdrawalNonce[msg.sender];
-    bytes32 requestHash = keccak256(abi.encodePacked(msg.sender, amount, nonce));
-    emit LargeWithdrawalRequested(msg.sender, amount, requestHash);
-}
-
-// Hash helper (used by treasurer off-chain to compute what to approve)
-function getWithdrawalRequestHash(address user, uint256 amount) external view returns (bytes32) {
-    return keccak256(abi.encodePacked(user, amount, withdrawalNonce[user]));
-}
+uint256 private constant VIRTUAL_SHARES = 1e3;
 ```
 
----
+Updated ERC20 deposit behavior:
 
-### V-04 — `invest()` and `divest()` bypass pause
+- validate token / amount / blacklist / cap
+- compute shares to mint
+- transfer assets in
+- mint shares
+- emit deposit event including shares
 
-One-line fix each:
+Updated ERC20 withdraw behavior:
+
+- user provides `sharesToBurn`
+- vault computes current asset value
+- if idle assets are insufficient because funds are deployed, revert with explicit “divest first” style liquidity error
+- burn shares
+- transfer assets
+- emit withdraw event including shares burned
+
+New view functions:
+
+- `previewWithdraw(address token, address user)`
+- `previewDeposit(address token, uint256 amount)`
+- `convertToShares(address token, uint256 assets)`
+- `getShares(address token, address user)`
+
+### V-03 — Replace timestamp-based large withdrawal approval with nonce-based flow
+
+Remove `block.timestamp` from approval hashes.
+
+Add:
+
+```solidity
+mapping(address => uint256) public withdrawalNonce;
+```
+
+New flow:
+
+1. user requests large withdrawal
+2. request hash is based on `(user, amount, nonce)`
+3. treasurer approves that exact tuple
+4. user executes with the same nonce
+5. approval is consumed
+6. nonce advances after success
+
+Functions and behaviors:
+
+- `requestLargeWithdrawal(uint256 amount)`
+- `getWithdrawalRequestHash(address user, uint256 amount)`
+- treasurer approval path must be nonce-aware
+- `withdraw()` must validate approval against current nonce, not timestamp
+
+### V-04 — `invest()` and `divest()` must respect pause
+
+Add `whenNotPaused` to:
 
 ```solidity
 function invest(address token, uint256 amount) external nonReentrant whenNotPaused onlyRole(TREASURER_ROLE)
 function divest(uint256 amount, uint256 minAmountOut) external nonReentrant whenNotPaused onlyRole(TREASURER_ROLE)
 ```
 
-`emergencyDivest()` intentionally keeps no pause check — it is the escape hatch.
+`emergencyDivest()` intentionally remains callable while paused.
 
----
+### V-05 — `emergencyDivest()` gets `nonReentrant`
 
-### V-05 — `emergencyDivest()` missing `nonReentrant`
+Update to:
 
 ```solidity
 function emergencyDivest() external nonReentrant onlyRole(DEFAULT_ADMIN_ROLE)
 ```
 
----
+### V-06 — Add slippage protection on `divest()`
 
-### V-06 — No slippage protection on `divest()`
-
-Add `minAmountOut` parameter:
+Update signature:
 
 ```solidity
-function divest(uint256 amount, uint256 minAmountOut) external nonReentrant whenNotPaused onlyRole(TREASURER_ROLE) {
-    require(address(strategy) != address(0), "No strategy set");
-    require(amount > 0, "Amount must be > 0");
-    require(strategy.totalAssets() >= amount, "Insufficient strategy balance");
-
-    address token = strategy.underlyingToken();
-    uint256 balanceBefore = IERC20(token).balanceOf(address(this));
-
-    bool success = strategy.withdraw(amount);
-    require(success, "Strategy withdraw failed");
-
-    uint256 received = IERC20(token).balanceOf(address(this)) - balanceBefore;
-    require(received >= minAmountOut, "Slippage: received less than minAmountOut");
-
-    emit Divested(token, received);
-}
+function divest(uint256 amount, uint256 minAmountOut) external
 ```
 
----
+Behavior:
 
-### V-07 — No deposit cap
+- measure vault token balance before strategy withdraw
+- call strategy withdraw
+- measure actual amount received
+- require `received >= minAmountOut`
+- emit event using actual receive semantics, not requested amount semantics
+
+### V-07 — Add per-token deposit cap
+
+Add:
 
 ```solidity
-// Configurable per token, set by TREASURER_ROLE. 0 = no cap.
 mapping(address => uint256) public depositCap;
-
-function setDepositCap(address token, uint256 cap) external onlyRole(TREASURER_ROLE) {
-    depositCap[token] = cap;
-    emit DepositCapUpdated(token, cap);
-}
 ```
 
-In `depositToken()`, add:
+And:
+
 ```solidity
-if (depositCap[token] > 0) {
-    require(_totalAssets(token) + amount <= depositCap[token], "Deposit cap reached");
-}
+function setDepositCap(address token, uint256 cap) external onlyRole(TREASURER_ROLE)
 ```
 
-`_totalAssets(token)` is used instead of a `totalDeposited` counter because `totalDeposited` would only track principal — it would never decrease on withdrawal and never reflect yield, causing it to drift from the real TVL and incorrectly block new deposits. `_totalAssets` always reflects the current vault TVL.
+Rules:
+
+- `0` means unlimited
+- cap check runs inside `depositToken()`
+- cap is based on `_totalAssets(token) + amount`
+
+This avoids drift that would happen with a principal-only deposit counter.
+
+### V-08 — Remove duplicate manual emits
+
+Remove manual duplicate emits from:
+
+- `grantManagerRole()`
+- `grantOperatorRole()`
+- `grantTreasurerRole()`
+- `pause()`
+- `unpause()`
+
+OpenZeppelin already emits those events internally.
 
 ---
 
-### V-08 — Double event emission
+## Performance fee policy
 
-Remove the manual `emit` lines from:
-- `grantManagerRole()` (line 92)
-- `grantOperatorRole()` (line 97)
-- `grantTreasurerRole()` (line 103)
-- `pause()` (line 116–117)
-- `unpause()` (line 121–122)
+VaultV4 should include a platform revenue model for ERC20 strategy yield.
 
-OpenZeppelin already emits these internally.
+Locked fee policy:
+
+- keep the existing ETH withdrawal fee model unchanged
+- add a **performance fee on ERC20 strategy yield only**
+- fee applies only to **realized profit**
+- fee is realized only on **`divest()`**
+- treasury receives **shares**, not direct token transfers
+
+Add state:
+
+```solidity
+address public feeTreasury;
+uint256 public performanceFeeBps;
+uint256 public constant MAX_PERFORMANCE_FEE = 2000;
+```
+
+Locked defaults:
+
+- `performanceFeeBps = 1000`
+- `MAX_PERFORMANCE_FEE = 2000`
+
+Meaning:
+
+- default fee is 10% of realized yield
+- hard cap is 20%
+
+Fee realization model on `divest(amount, minAmountOut)`:
+
+1. measure actual assets received from strategy
+2. compute realized profit:
+
+```text
+realizedProfit = max(received - amount, 0)
+```
+
+3. compute fee on realized profit:
+
+```text
+feeAssets = realizedProfit * performanceFeeBps / 10000
+```
+
+4. convert `feeAssets` into shares using the current share exchange rate
+5. mint `feeShares` to `feeTreasury`
+6. keep underlying assets inside the vault
+
+This means:
+
+- user principal is never charged
+- fee is not charged on deposits
+- fee is not charged if no profit is realized
+- treasury participation is represented inside the same share system as users
+
+Why shares instead of direct USDC transfer:
+
+- keeps vault accounting share-native
+- avoids immediate asset transfer out of idle vault liquidity
+- aligns better with ERC-4626-style ownership semantics
+
+Admin / treasurer permissions:
+
+- `setFeeTreasury(address treasury)` — `DEFAULT_ADMIN_ROLE`
+- `setPerformanceFee(uint256 newFeeBps)` — `TREASURER_ROLE`
+
+Validation rules:
+
+- treasury address must not be zero
+- fee bps must not exceed `MAX_PERFORMANCE_FEE`
 
 ---
 
-## Updated event signatures
+## Updated events and interfaces
+
+Updated ERC20 events:
 
 ```solidity
-// Updated — adds shares parameter
 event TokenDeposited(address indexed user, address indexed token, uint256 amount, uint256 shares);
 event TokenWithdrawn(address indexed user, address indexed token, uint256 amount, uint256 shares);
+```
 
-// New
+New events:
+
+```solidity
 event DepositCapUpdated(address indexed token, uint256 cap);
 event LargeWithdrawalRequested(address indexed user, uint256 amount, bytes32 indexed requestHash);
+event PerformanceFeeUpdated(uint256 oldFeeBps, uint256 newFeeBps);
+event FeeTreasuryUpdated(address indexed oldTreasury, address indexed newTreasury);
+event PerformanceFeeAccrued(address indexed token, uint256 realizedProfit, uint256 feeAssets, uint256 feeShares);
 ```
+
+Interface / behavior updates that affect integrations:
+
+- `withdrawToken(address token, uint256 sharesToBurn)` now consumes shares, not asset amount
+- `divest(uint256 amount, uint256 minAmountOut)` now requires slippage input
+- frontend must convert desired asset amount to shares before token withdrawal
+- event consumers must handle actual amount + shares semantics
 
 ---
 
-## Test plan for `VaultV4.t.sol`
+## Test plan
 
-The existing `VaultV3.t.sol` tests cover roles, pause, blacklist, ETH deposit/withdraw, fees, and threshold — all of which carry over unchanged. The new test file should add:
+The new test plan must cover local correctness and mainnet-oriented compatibility.
+
+### Unit / local tests
+
+Required test groups:
+
+- share accounting correctness
+- inflation attack protection
+- withdraw / divest coordination
+- nonce-based large withdrawal flow
+- pause / emergency behavior
+- deposit cap behavior
+- performance fee behavior
+- treasury share minting behavior
+
+Required tests:
 
 | Test | What it covers |
 |---|---|
-| `testDepositMintsShares` | First deposit mints `amount * 1000` shares; 1000 dead shares locked to `address(0)` |
+| `testDepositMintsShares` | First deposit mints `amount * 1000` shares and locks dead shares to `address(0)` |
 | `testShareValueGrowsWithYield` | After simulated yield, `previewWithdraw` returns more than deposited |
 | `testWithdrawBurnsCorrectShares` | Shares decrease proportionally on withdrawal |
-| `testTwoUsersShareYieldProportionally` | User A deposits 100, User B deposits 100, yield of 10 → each gets 5 |
-| `testInflationAttackPrevented` | Attacker deposits 1 wei + donates large amount → second depositor still gets fair shares |
-| `testWithdrawRevertsIfFundsInStrategy` | Funds in Aave → `withdrawToken` reverts with liquidity message |
-| `testDivestThenWithdraw` | `divest()` → `withdrawToken()` succeeds |
-| `testDivestSlippageReverts` | `divest()` with `minAmountOut` higher than received → reverts |
-| `testLargeWithdrawalNonceFlow` | Full request → approve → execute flow works |
-| `testLargeWithdrawalWrongNonceReverts` | Approval for nonce N cannot be used at nonce N+1 |
-| `testInvestRespectsPause` | `invest()` reverts when paused |
-| `testDivestRespectsPause` | `divest()` reverts when paused |
-| `testEmergencyDivestWhilePaused` | `emergencyDivest()` succeeds even when paused |
-| `testDepositCapEnforced` | Deposit above cap reverts |
-| `testDepositCapZeroMeansNoCap` | Cap of 0 allows unlimited deposits |
+| `testTwoUsersShareYieldProportionally` | Multiple users share yield correctly before fees |
+| `testInflationAttackPrevented` | Hostile first-deposit + donation pattern does not zero out second depositor |
+| `testWithdrawRevertsIfFundsInStrategy` | Withdraw path reverts when liquidity is still deployed |
+| `testDivestThenWithdraw` | Divest restores idle liquidity and withdrawal succeeds |
+| `testDivestSlippageReverts` | `minAmountOut` protection works |
+| `testLargeWithdrawalNonceFlow` | Request → approve → execute works |
+| `testLargeWithdrawalWrongNonceReverts` | Approval cannot be replayed against another nonce |
+| `testInvestRespectsPause` | `invest()` reverts while paused |
+| `testDivestRespectsPause` | `divest()` reverts while paused |
+| `testEmergencyDivestWhilePaused` | `emergencyDivest()` still works while paused |
+| `testDepositCapEnforced` | Above-cap deposits revert |
+| `testDepositCapZeroMeansNoCap` | Zero cap means unlimited |
+
+### Fee-specific tests
+
+These must remain in the document:
+
+| Test | What it covers |
+|---|---|
+| `testPerformanceFeeOnRealizedYieldOnly` | Fee is charged only on yield, not principal |
+| `testNoPerformanceFeeWhenNoProfit` | No fee accrues if `divest()` realizes no profit |
+| `testTreasuryReceivesSharesNotAssets` | Treasury gets shares, not direct USDC transfer |
+| `testUserReceivesNetYieldAfterFee` | User yield is reduced only by the configured performance fee |
+| `testPerformanceFeeRespectsCap` | Fee setter cannot exceed the hard cap |
+| `testSetFeeTreasuryAdminOnly` | Only admin can set treasury |
+| `testSetPerformanceFeeTreasurerOnly` | Only treasurer can set fee bps |
+| `testMultipleUsersShareNetYieldAndTreasuryGetsFeeShares` | Users share net yield proportionally and treasury gets fee shares |
+| `testDivestWithSlippageAndFee` | Slippage protection and fee realization interact correctly |
+
+### Mainnet-oriented validation
+
+This project tests against mainnet conditions, so integration validation is part of the normal path, not optional hardening.
+
+Required validation groups:
+
+- Base fork integration
+- Arbitrum fork integration
+- local deployment smoke test
+
+Required expectations:
+
+- strategy integration must be validated on **Base mainnet fork**
+- strategy integration must be validated on **Arbitrum mainnet fork**
+- final behavior must remain compatible with live Aave-based strategy flows
 
 ---
 
@@ -298,24 +422,48 @@ The existing `VaultV3.t.sol` tests cover roles, pause, blacklist, ETH deposit/wi
 
 | File | Action |
 |---|---|
-| `contracts/VaultV4.sol` | Create — full rewrite based on this plan |
-| `test/VaultV4.t.sol` | Create — new test suite (VaultV3.t.sol stays untouched) |
-| `script/Deploy.s.sol` | Update to deploy VaultV4 instead of VaultV3 |
+| `contracts/VaultV4.sol` | Create — full VaultV4 implementation |
+| `test/VaultV4.t.sol` | Create — new unit test suite |
+| `script/Deploy.s.sol` | Update — deploy `VaultV4` instead of `VaultV3` |
 | `DEPLOYED_ADDRESSES.md` | Update after redeployment |
-| `frontend/lib/vault.ts` | Update ABI: replace `tokenBalances`, `getTokenBalance` with `shares`, `getShares`, `previewWithdraw`, `previewDeposit`, `convertToShares`; update `withdrawToken` and `divest` signatures |
-| `frontend/hooks/useVault.ts` | Update `withdrawUsdt` and `simulateWithdrawUsdt` to call `convertToShares` first, then pass share count to `withdrawToken` |
-| `ponder-indexing/ponder.config.ts` | Update contract address + startBlock |
+| `frontend/lib/vault.ts` | Update ABI: shares-based views and new function signatures |
+| `frontend/hooks/useVault.ts` | Update token withdraw flow to convert assets to shares before `withdrawToken()` |
+| `ponder-indexing/ponder.config.ts` | Update contract address and start block after redeploy |
 
-`AaveStrategy.sol` and `IStrategy.sol` require **no changes**.
+No planned changes unless implementation proves otherwise:
+
+- `contracts/AaveStrategy.sol`
+- `contracts/IStrategy.sol`
 
 ---
 
 ## Implementation order
 
-1. Write `VaultV4.sol` — all V-01 through V-08 fixes in one pass
-2. Write `VaultV4.t.sol` — unit tests, verify `forge test` passes
-3. Run fork tests against Base and Arbitrum to confirm strategy integration
-4. Update `Deploy.s.sol`
-5. Deploy to Anvil, verify smoke test
-6. Deploy to mainnet, update addresses
-7. Update frontend ABI + Ponder config
+1. write `VaultV4.sol`
+2. write `VaultV4.t.sol`
+3. run unit tests
+4. run Base fork tests
+5. run Arbitrum fork tests
+6. update deploy script to use `VaultV4`
+7. run local Anvil deployment smoke test
+8. redeploy cleanly to mainnet environments if desired
+9. update frontend ABI and hooks
+10. update Ponder config and addresses docs
+
+This order reflects the actual validation path for the project:
+
+- local correctness first
+- live-protocol compatibility next
+- deployment tooling after contract correctness
+- frontend and indexer updates only after the contract interface is stable
+
+---
+
+## Assumptions
+
+- `VaultV3` has no real users, so no migration contract or migration script is needed
+- `VaultV4` is the intended production replacement
+- mainnet fork testing is part of the normal validation path, not optional hardening
+- `AaveStrategy.sol` and `IStrategy.sol` stay unchanged unless implementation proves otherwise
+- frontend withdraw UX must convert desired assets into shares before calling `withdrawToken`
+- treasury-share minting is the only protocol-revenue mechanism added for ERC20 yield in V4
