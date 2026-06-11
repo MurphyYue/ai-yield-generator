@@ -7,10 +7,15 @@ export const VAULT_ABI = parseAbi([
   'function withdraw(uint256 amount) external',
   'function balances(address) external view returns (uint256)',
   'function depositToken(address token, uint256 amount) external',
-  'function withdrawToken(address token, uint256 amount) external',
+  'function withdrawToken(address token, uint256 sharesToBurn) external',
   'function depositWithPermit(address token, uint256 amount, address owner, uint256 deadline, uint8 v, bytes32 r, bytes32 s) external',
   'function getTokenBalance(address token, address user) external view returns (uint256)',
-  'function tokenBalances(address, address) external view returns (uint256)',
+  'function getShares(address token, address user) external view returns (uint256)',
+  'function shares(address, address) external view returns (uint256)',
+  'function totalShares(address) external view returns (uint256)',
+  'function previewWithdraw(address token, address user) external view returns (uint256 assets)',
+  'function previewDeposit(address token, uint256 amount) external view returns (uint256 sharesToMint)',
+  'function convertToShares(address token, uint256 assets) external view returns (uint256 sharesToBurn)',
   'function grantManagerRole(address account) external',
   'function grantOperatorRole(address account) external',
   'function grantTreasurerRole(address account) external',
@@ -23,16 +28,23 @@ export const VAULT_ABI = parseAbi([
   'function blacklist(address account) external',
   'function unblacklist(address account) external',
   'function blacklisted(address) external view returns (bool)',
-  'function approveLargeWithdrawal(address user, uint256 amount, bytes32 requestHash) external',
+  'function requestLargeWithdrawal(uint256 amount) external',
+  'function approveLargeWithdrawal(address user, uint256 amount, uint256 nonce) external',
+  'function withdrawalNonce(address) external view returns (uint256)',
   'function setWithdrawalFee(uint256 newFee) external',
   'function setLargeWithdrawalThreshold(uint256 newThreshold) external',
+  'function setDepositCap(address token, uint256 cap) external',
+  'function setFeeTreasury(address treasury) external',
+  'function setPerformanceFee(uint256 newFeeBps) external',
   'function largeWithdrawalThreshold() external view returns (uint256)',
   'function withdrawalFee() external view returns (uint256)',
+  'function performanceFeeBps() external view returns (uint256)',
+  'function feeTreasury() external view returns (address)',
   'function getWithdrawalRequestHash(address user, uint256 amount) external view returns (bytes32)',
   'function largeWithdrawalApproved(bytes32) external view returns (bool)',
   'function setStrategy(address _strategy) external',
   'function invest(address token, uint256 amount) external',
-  'function divest(uint256 amount) external',
+  'function divest(uint256 amount, uint256 minAmountOut) external',
   'function emergencyDivest() external',
   'function getTotalBalance(address token) external view returns (uint256)',
   'function getStrategyBalance() external view returns (uint256)',
@@ -40,14 +52,18 @@ export const VAULT_ABI = parseAbi([
   'function strategy() external view returns (address)',
   'event Deposited(address indexed user, uint256 amount)',
   'event Withdrawn(address indexed user, uint256 amount, uint256 fee)',
-  'event TokenDeposited(address indexed user, address indexed token, uint256 amount)',
-  'event TokenWithdrawn(address indexed user, address indexed token, uint256 amount)',
+  'event TokenDeposited(address indexed user, address indexed token, uint256 amount, uint256 sharesMinted)',
+  'event TokenWithdrawn(address indexed user, address indexed token, uint256 amount, uint256 sharesBurned)',
   'event Paused(address indexed account)',
   'event Unpaused(address indexed account)',
   'event Blacklisted(address indexed account, bool indexed status)',
   'event LargeWithdrawalApproved(address indexed user, bytes32 indexed requestHash)',
   'event WithdrawalFeeUpdated(uint256 oldFee, uint256 newFee)',
   'event ThresholdUpdated(uint256 oldThreshold, uint256 newThreshold)',
+  'event DepositCapUpdated(address indexed token, uint256 cap)',
+  'event PerformanceFeeUpdated(uint256 oldFeeBps, uint256 newFeeBps)',
+  'event FeeTreasuryUpdated(address indexed oldTreasury, address indexed newTreasury)',
+  'event PerformanceFeeAccrued(address indexed token, uint256 realizedProfit, uint256 feeAssets, uint256 feeShares)',
 ])
 
 export const ERC20_ABI = parseAbi([
@@ -122,7 +138,6 @@ export function getStableTokenSymbolForChain(chainKey: SupportedChainKey): 'USDC
 export function getPermitVersionForToken(tokenAddress: `0x${string}`): string {
   const normalized = tokenAddress.toLowerCase()
 
-  // Circle USDC on Base and Arbitrum follows the FiatTokenV2 family and expects EIP-712 version "2".
   if (
     normalized === USDC_BASE.toLowerCase() ||
     normalized === USDC_ARBITRUM.toLowerCase()
@@ -130,7 +145,6 @@ export function getPermitVersionForToken(tokenAddress: `0x${string}`): string {
     return '2'
   }
 
-  // Default to "1" for mock/test tokens and older permit-enabled ERC20s unless explicitly overridden.
   return '1'
 }
 

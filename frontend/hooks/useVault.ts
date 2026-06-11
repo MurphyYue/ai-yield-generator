@@ -8,7 +8,7 @@ import {
   useWaitForTransactionReceipt,
   useWriteContract,
 } from 'wagmi'
-import { simulateContract } from '@wagmi/core'
+import { readContract, simulateContract } from '@wagmi/core'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { formatEther, formatUnits, parseEther, parseUnits } from 'viem'
 import {
@@ -171,11 +171,17 @@ export function useVault() {
     async (amount: string) => {
       if (!address || !config) return null
       try {
+        const sharesToBurn = await readContract(config, {
+          address: vaultAddress,
+          abi: VAULT_ABI,
+          functionName: 'convertToShares',
+          args: [stableTokenAddress, parseUnits(amount, 6)],
+        })
         await simulateContract(config, {
           address: vaultAddress,
           abi: VAULT_ABI,
           functionName: 'withdrawToken',
-          args: [stableTokenAddress, parseUnits(amount, 6)],
+          args: [stableTokenAddress, sharesToBurn],
           account: address,
         })
         return null
@@ -237,6 +243,14 @@ export function useVault() {
     address: vaultAddress,
     abi: VAULT_ABI,
     functionName: 'getTokenBalance',
+    args: address ? [stableTokenAddress, address] : undefined,
+    query: { enabled: !!address },
+  })
+
+  const { data: userStableShares, refetch: refetchUserStableShares } = useReadContract({
+    address: vaultAddress,
+    abi: VAULT_ABI,
+    functionName: 'getShares',
     args: address ? [stableTokenAddress, address] : undefined,
     query: { enabled: !!address },
   })
@@ -351,16 +365,22 @@ export function useVault() {
   )
 
   const withdrawUsdt = useCallback(
-    (amount: string) => {
+    async (amount: string) => {
       if (!amount || parseFloat(amount) <= 0) return
+      const sharesToBurn = await readContract(config, {
+        address: vaultAddress,
+        abi: VAULT_ABI,
+        functionName: 'convertToShares',
+        args: [stableTokenAddress, parseUnits(amount, 6)],
+      })
       writeWithdrawToken({
         address: vaultAddress,
         abi: VAULT_ABI,
         functionName: 'withdrawToken',
-        args: [stableTokenAddress, parseUnits(amount, 6)],
+        args: [stableTokenAddress, sharesToBurn],
       })
     },
-    [stableTokenAddress, vaultAddress, writeWithdrawToken]
+    [config, stableTokenAddress, vaultAddress, writeWithdrawToken]
   )
 
   const { writeContract: writePause, data: pauseHash } = useWriteContract()
@@ -424,11 +444,12 @@ export function useVault() {
 
   const divest = useCallback(
     (amount: string) => {
+      const parsedAmount = parseUnits(amount, 6)
       writeDivest({
         address: vaultAddress,
         abi: VAULT_ABI,
         functionName: 'divest',
-        args: [parseUnits(amount, 6)],
+        args: [parsedAmount, parsedAmount],
       })
     },
     [vaultAddress, writeDivest]
@@ -454,6 +475,7 @@ export function useVault() {
         refetchUsdtAllowance()
         refetchVaultTokenHoldings()
         refetchPaused()
+        refetchUserStableShares()
       }, 1000)
     }
   }, [
@@ -470,6 +492,7 @@ export function useVault() {
     refetchVaultBalance,
     refetchVaultTokenHoldings,
     refetchVaultUsdtBalance,
+    refetchUserStableShares,
   ])
 
   useEffect(() => {
@@ -478,6 +501,7 @@ export function useVault() {
         refetchStrategyBalance()
         refetchVaultTokenHoldings()
         refetchVaultUsdtBalance()
+        refetchUserStableShares()
       }, 1000)
     }
   }, [
@@ -486,6 +510,7 @@ export function useVault() {
     refetchStrategyBalance,
     refetchVaultTokenHoldings,
     refetchVaultUsdtBalance,
+    refetchUserStableShares,
   ])
 
   return {
@@ -503,6 +528,8 @@ export function useVault() {
     usdtBalanceFormatted: usdtBalance ? formatUnits(usdtBalance, 6) : '0',
     vaultUsdtBalance: vaultUsdtBalance ?? BigInt(0),
     vaultUsdtBalanceFormatted: vaultUsdtBalance ? formatUnits(vaultUsdtBalance, 6) : '0',
+    userStableShares: userStableShares ?? BigInt(0),
+    userStableSharesFormatted: userStableShares ? formatUnits(userStableShares, 6) : '0',
     usdtAllowance: usdtAllowance ?? BigInt(0),
     usdtAllowanceFormatted: usdtAllowance ? formatUnits(usdtAllowance, 6) : '0',
     deposit,
