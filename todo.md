@@ -4408,3 +4408,72 @@ Frontend UI (connected-devices pane) is out of scope for Day 23.
 | Drop `conversations` table from `setupTables()` | Out of scope for this redesign. |
 
 ---
+
+## AI Production Features Backlog
+
+These are the next high-value AI-layer features that strengthen the product as a real USDC yield aggregator and make the assistant more useful in production.
+
+### Priority 1 — Operator Yield Allocation Copilot
+
+- [ ] Compare supported strategies across Base and Arbitrum using net yield, gas, slippage, liquidity, and concentration risk
+- [ ] Return structured operator recommendations: `stay | invest | divest | rebalance | migrate`
+- [ ] Explain recommendation in plain language for human review before execution
+- [ ] Keep AI advisory-only: operator signs, AI never auto-executes
+
+### Priority 2 — Strategy Health Monitor
+
+- [ ] Detect APY drops, utilization spikes, weak pool liquidity, and strategy underperformance vs benchmark
+- [ ] Surface operator alerts with recommended actions
+- [ ] Add a “why this matters” explanation layer so alerts are actionable, not just noisy
+
+### Priority 3 — User Profit Explainability
+
+- [ ] Answer “why did my profit change?” from real vault and strategy data
+- [ ] Explain principal vs profit vs idle assets vs deployed assets
+- [ ] Show chain, strategy, and recent operator action context in the response
+
+### Priority 4 — Idle Capital Alerting
+
+- [ ] Detect when too much USDC sits idle in the vault
+- [ ] Estimate missed yield from idle balances
+- [ ] Notify `OPERATOR_ROLE` with a suggested deployment action
+
+### Priority 5 — Withdrawal Pressure Forecast
+
+- [ ] Estimate whether the vault should keep more idle liquidity for withdrawals
+- [ ] Consider recent withdrawal patterns and large-holder concentration
+- [ ] Recommend an idle-liquidity buffer instead of blindly maximizing deployed capital
+
+### Priority 6 — Strategy Rotation Simulator
+
+- [ ] Simulate “move X% from Strategy A to Strategy B” before execution
+- [ ] Show projected net yield, move cost, breakeven days, and risk tradeoffs
+- [ ] Use this as an operator planning tool, not a user-facing default flow
+
+### Priority 7 — Policy Guardrail Assistant
+
+- [ ] Check proposed operator actions against protocol policy before execution
+- [ ] Detect over-concentration, weak net advantage, or low post-divest liquidity
+- [ ] Return `allowed | risky | blocked` with reasons
+
+### Priority 8 — Goal-Based User Assistant
+
+- [ ] Adapt recommendations to user time horizon and risk tolerance
+- [ ] Support prompts like “I need this money in 10 days” or “I want lower risk”
+- [ ] Keep responses grounded in real strategy and liquidity constraints
+
+### Suggested MVP Order
+
+1. [ ] Yield Allocation Copilot
+2. [ ] Strategy Health Monitor
+3. [ ] User Profit Explainability
+4. [ ] Idle Capital Alerting
+
+### Product Rule
+
+- [ ] AI recommends, humans execute
+- [ ] `OPERATOR_ROLE` owns daily capital allocation
+- [ ] `TREASURER_ROLE` owns fee settings and large withdrawal approvals
+- [ ] AI must always use real on-chain and backend-derived data, not fabricated estimates
+
+---

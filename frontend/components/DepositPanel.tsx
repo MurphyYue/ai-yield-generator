@@ -2,14 +2,11 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { useVault } from '@/hooks/useVault'
-import { usePermitSignature } from '@/hooks/usePermitSignature'
-import { TokenSelector, TokenType } from './TokenSelector'
-import { parseUnits } from 'viem'
 
 interface Intent {
   action: 'deposit' | 'withdraw' | 'unknown'
   amount: number
-  token: 'ETH' | 'USDT' | 'unknown'
+  token: 'USDC' | 'unknown'
   token_address: string
   confidence: 'high' | 'medium' | 'low'
   risk_level?: 'high' | 'medium' | 'low'
@@ -23,246 +20,182 @@ interface DepositPanelProps {
 
 export function DepositPanel({ intent }: DepositPanelProps) {
   const [amount, setAmount] = useState('')
-  const [selectedToken, setSelectedToken] = useState<TokenType>('ETH')
   const [isSimulating, setIsSimulating] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [usePermit, setUsePermit] = useState(true) // Try permit first
-
-  const { signPermit } = usePermitSignature()
 
   const {
-    vaultAddress,
-    stableTokenAddress,
     stableTokenSymbol,
-    deposit,
-    depositUsdt,
-    depositUsdtWithPermit,
-    approveUsdt,
-    simulateDeposit,
-    simulateDepositUsdt,
-    simulateApproveUsdt,
-    isDepositing,
-    isDepositingToken,
-    isDepositingWithPermit,
-    isApproving,
-    isDepositSuccess,
-    isDepositTokenSuccess,
-    isDepositWithPermitSuccess,
-    isApproveSuccess,
-    usdtAllowance,
-    usdtAllowanceFormatted,
-    ethBalanceFormatted,
-    usdtBalanceFormatted,
-    vaultBalanceFormatted,
-    vaultUsdtBalanceFormatted,
+    stableTokenBalanceFormatted,
+    stableTokenAllowance,
+    stableTokenAllowanceFormatted,
+    userPositionAssetsFormatted,
+    depositCapFormatted,
+    approveStable,
+    depositStable,
+    simulateApproveStable,
+    simulateDepositStable,
+    isApprovingStable,
+    isDepositingStable,
+    isApproveStableSuccess,
+    isDepositStableSuccess,
   } = useVault()
 
-  // Auto-fill from AI intent
   useEffect(() => {
     if (intent && intent.action === 'deposit' && intent.amount > 0) {
       setAmount(intent.amount.toString())
-      if (intent.token === 'ETH' || intent.token === 'USDT') {
-        setSelectedToken(intent.token)
-      }
     }
   }, [intent])
 
-  // Clear error when amount changes
   useEffect(() => {
     setError(null)
-  }, [amount, selectedToken])
+  }, [amount])
 
   const handleDeposit = useCallback(async () => {
-    console.log('selectedToken', selectedToken)
     if (!amount || parseFloat(amount) <= 0) return
     setError(null)
 
-    if (selectedToken === 'ETH') {
-      // Simulate first
-      setIsSimulating(true)
-      const simError = await simulateDeposit(amount)
-      setIsSimulating(false)
+    const amountWei = BigInt(Math.floor(parseFloat(amount) * 1_000_000))
 
+    if (!stableTokenAllowance || stableTokenAllowance < amountWei) {
+      setIsSimulating(true)
+      const simError = await simulateApproveStable(amount)
+      setIsSimulating(false)
       if (simError) {
         setError(simError.message)
         return
       }
-
-      // Simulation passed, execute
-      deposit(amount)
-
-    } else if (selectedToken === 'USDT') {
-      const amountWei = parseFloat(amount) * 1_000_000 // USDT has 6 decimals
-
-      // Try ONE-CLICK deposit with permit first
-      if (usePermit) {
-        try {
-          setIsSimulating(true)
-
-          // Generate permit signature (off-chain, no gas)
-          const signature = await signPermit(
-            stableTokenAddress,
-            vaultAddress,
-            parseUnits(amount, 6)
-          )
-
-          setIsSimulating(false)
-          if (signature) {
-            // One-step deposit with permit
-            depositUsdtWithPermit(amount, signature)
-            return
-          }
-        } catch (permitError: unknown) {
-          console.log('Permit failed, falling back to two-step flow:', permitError)
-          setIsSimulating(false)
-          setUsePermit(false) // Disable permit for this transaction
-          // Fall through to two-step flow below
-        }
-      }
-
-      // Fallback: Traditional two-step approve + deposit
-      // Check if allowance is sufficient
-      if (!usdtAllowance || usdtAllowance < amountWei) {
-        // Simulate approval first
-        setIsSimulating(true)
-        const simError = await simulateApproveUsdt(amount)
-        setIsSimulating(false)
-
-        if (simError) {
-          setError(simError.message)
-          return
-        }
-
-        // Simulation passed, approve
-        approveUsdt(amount)
-      } else {
-        // Simulate deposit first
-        setIsSimulating(true)
-        const simError = await simulateDepositUsdt(amount)
-        setIsSimulating(false)
-
-        if (simError) {
-          setError(simError.message)
-          return
-        }
-        // Simulation passed, deposit
-        depositUsdt(amount)
-      }
+      approveStable(amount)
+      return
     }
+
+    setIsSimulating(true)
+    const simError = await simulateDepositStable(amount)
+    setIsSimulating(false)
+
+    if (simError) {
+      setError(simError.message)
+      return
+    }
+
+    depositStable(amount)
   }, [
     amount,
-    selectedToken,
-    usePermit,
-    stableTokenAddress,
-    vaultAddress,
-    simulateDeposit,
-    simulateDepositUsdt,
-    simulateApproveUsdt,
-    usdtAllowance,
-    deposit,
-    depositUsdt,
-    depositUsdtWithPermit,
-    approveUsdt,
-    signPermit
+    approveStable,
+    depositStable,
+    simulateApproveStable,
+    simulateDepositStable,
+    stableTokenAllowance,
   ])
 
-  const getMaxAmount = () => {
-    if (selectedToken === 'ETH') {
-      return ethBalanceFormatted
-    } else {
-      return usdtBalanceFormatted
-    }
+  const handleSetMax = () => {
+    setAmount(stableTokenBalanceFormatted)
   }
 
-  const getAvailableBalance = () => {
-    if (selectedToken === 'ETH') {
-      return ethBalanceFormatted
-    } else {
-      return usdtBalanceFormatted
-    }
-  }
-
-  const getVaultBalance = () => {
-    if (selectedToken === 'ETH') {
-      return vaultBalanceFormatted
-    } else {
-      return vaultUsdtBalanceFormatted
-    }
-  }
-
-  const isLoading = isDepositing || isDepositingToken || isDepositingWithPermit || isApproving
-  const isSuccess = isDepositSuccess || isDepositTokenSuccess || isDepositWithPermitSuccess || isApproveSuccess
+  const isLoading = isApprovingStable || isDepositingStable
+  const isSuccess = isApproveStableSuccess || isDepositStableSuccess
+  const needsApproval = !stableTokenAllowance || stableTokenAllowance < BigInt(Math.floor((parseFloat(amount || '0') || 0) * 1_000_000))
 
   return (
     <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '0.875rem' }}>
-      {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <span style={{ fontWeight: 700, fontSize: '0.95rem', letterSpacing: '-0.01em', color: 'var(--cyan)' }}>
-          ↓ Deposit
+          Deposit {stableTokenSymbol}
         </span>
         {intent && intent.action === 'deposit' && (
-          <span style={{
-            fontSize: '0.6rem', fontWeight: 600, letterSpacing: '0.08em',
-            color: 'var(--cyan)', background: 'var(--cyan-dim)',
-            border: '1px solid var(--cyan-glow)', padding: '2px 7px', borderRadius: 4,
-          }}>
+          <span
+            style={{
+              fontSize: '0.6rem',
+              fontWeight: 600,
+              letterSpacing: '0.08em',
+              color: 'var(--cyan)',
+              background: 'var(--cyan-dim)',
+              border: '1px solid var(--cyan-glow)',
+              padding: '2px 7px',
+              borderRadius: 4,
+            }}
+          >
             AI PARSED
           </span>
         )}
       </div>
 
-      {/* Token Selector */}
-      <TokenSelector selectedToken={selectedToken} onTokenChange={setSelectedToken} disabled={isLoading} />
-
-      {/* AI suggestion mismatch */}
-      {intent && intent.action === 'deposit' && intent.token !== selectedToken && (
-        <div className="alert-amber" style={{ fontSize: '0.7rem' }}>
-          AI suggested: Deposit {intent.amount} {intent.token}
-        </div>
-      )}
-
-      {/* Permit notice */}
-      {selectedToken === 'USDT' && (
-        <div className="alert-cyan" style={{ fontSize: '0.7rem' }}>
-          <span style={{ fontWeight: 600 }}>✦ One-Click Deposit</span> — gasless permit signature, single transaction.
-          Allowance: <span style={{ fontFamily: "'JetBrains Mono', monospace" }}>{usdtAllowanceFormatted} {stableTokenSymbol}</span>
-        </div>
-      )}
-
-      {/* Simulation error */}
-      {error && <div className="alert-red" style={{ fontSize: '0.75rem' }}>⚠ {error}</div>}
-
-      {/* Balances */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', color: 'var(--text-2)' }}>
-        <span>Available: <span style={{ fontFamily: "'JetBrains Mono', monospace", color: 'var(--text-1)' }}>{getAvailableBalance()} {selectedToken === 'USDT' ? stableTokenSymbol : selectedToken}</span></span>
-        <span>In vault: <span style={{ fontFamily: "'JetBrains Mono', monospace", color: 'var(--cyan)' }}>{getVaultBalance()} {selectedToken === 'USDT' ? stableTokenSymbol : selectedToken}</span></span>
+      <div className="alert-cyan" style={{ fontSize: '0.72rem' }}>
+        This vault accepts a single asset: <strong>{stableTokenSymbol}</strong>. Deposits mint vault shares; yield accrues through share value growth.
       </div>
 
-      {/* Amount input */}
+      {error && <div className="alert-red" style={{ fontSize: '0.75rem' }}>⚠ {error}</div>}
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, fontSize: '0.7rem', color: 'var(--text-2)' }}>
+        <div>
+          Wallet: <span style={{ fontFamily: "'JetBrains Mono', monospace", color: 'var(--text-1)' }}>{stableTokenBalanceFormatted} {stableTokenSymbol}</span>
+        </div>
+        <div>
+          Position: <span style={{ fontFamily: "'JetBrains Mono', monospace", color: 'var(--cyan)' }}>{userPositionAssetsFormatted} {stableTokenSymbol}</span>
+        </div>
+        <div>
+          Allowance: <span style={{ fontFamily: "'JetBrains Mono', monospace", color: 'var(--text-1)' }}>{stableTokenAllowanceFormatted} {stableTokenSymbol}</span>
+        </div>
+        <div>
+          Deposit cap: <span style={{ fontFamily: "'JetBrains Mono', monospace", color: 'var(--text-1)' }}>{depositCapFormatted === '0' ? 'Unlimited' : `${depositCapFormatted} ${stableTokenSymbol}`}</span>
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div style={{ fontSize: '0.68rem', color: 'var(--text-3)' }}>
+          Approval and deposit are separate until permit support is added back for VaultV4.
+        </div>
+        <button
+          onClick={handleSetMax}
+          disabled={isLoading}
+          style={{
+            fontSize: '0.65rem',
+            fontWeight: 600,
+            letterSpacing: '0.06em',
+            color: 'var(--text-2)',
+            background: 'var(--surface-3)',
+            border: '1px solid var(--border)',
+            borderRadius: 4,
+            padding: '2px 8px',
+            cursor: 'pointer',
+          }}
+        >
+          MAX
+        </button>
+      </div>
+
       <input
         className="vault-input"
         type="number"
         value={amount}
         onChange={e => setAmount(e.target.value)}
-        placeholder={`Amount (${selectedToken === 'USDT' ? stableTokenSymbol : selectedToken})`}
+        placeholder={`Amount (${stableTokenSymbol})`}
         step="0.000001"
         min="0"
-        max={getMaxAmount()}
+        max={stableTokenBalanceFormatted}
       />
 
-      {/* Action button */}
       <button
         className="btn btn-cyan"
         style={{ width: '100%', padding: '0.7rem' }}
         onClick={handleDeposit}
         disabled={isLoading || isSimulating || !amount || parseFloat(amount) <= 0}
       >
-        {isSimulating ? 'Checking…' : isLoading ? (isApproving ? 'Approving…' : 'Depositing…') : selectedToken === 'USDT' ? `One-Click Deposit ${amount || '0'} ${stableTokenSymbol}` : `Deposit ${amount || '0'} ETH`}
+        {isSimulating
+          ? 'Checking…'
+          : isLoading
+            ? isApprovingStable
+              ? `Approving ${stableTokenSymbol}…`
+              : 'Depositing…'
+            : needsApproval
+              ? `Approve ${stableTokenSymbol}`
+              : `Deposit ${amount || '0'} ${stableTokenSymbol}`}
       </button>
 
       {isSuccess && (
         <div className="alert-green" style={{ fontSize: '0.75rem' }}>
-          {isDepositWithPermitSuccess ? '✦ One-click deposit complete.' : isApproveSuccess ? `Approved. You can now deposit ${amount} ${selectedToken === 'USDT' ? stableTokenSymbol : selectedToken}.` : 'Deposit complete.'}
+          {isApproveStableSuccess
+            ? `Approval submitted. You can now deposit ${stableTokenSymbol}.`
+            : 'Deposit complete.'}
         </div>
       )}
     </div>

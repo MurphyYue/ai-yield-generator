@@ -15,7 +15,7 @@ const rpcUrls = {
 console.log(`Configured default frontend chain: ${DEFAULT_CHAIN}`)
 
 export const config = getDefaultConfig({
-  appName: 'Web3 Vault Dashboard',
+  appName: 'Yield Navigator',
   projectId: '3f9e6a7456cd481a9675fc18856e96e3',
   chains: [base, arbitrum, sepolia, anvil],
   transports: {

@@ -13,15 +13,16 @@ export function DestinationVaultFlow({ suggestedAmount }: DestinationVaultFlowPr
   const {
     activeChainKey,
     stableTokenSymbol,
-    usdtBalanceFormatted,
-    vaultUsdtBalanceFormatted,
+    stableTokenBalanceFormatted,
+    userPositionAssetsFormatted,
+    vaultIdleAssetsFormatted,
     strategyBalanceFormatted,
-    usdtAllowance,
-    approveUsdt,
-    depositUsdt,
+    stableTokenAllowance,
+    approveStable,
+    depositStable,
     invest,
-    isApproving,
-    isDepositingToken,
+    isApprovingStable,
+    isDepositingStable,
     isInvesting,
   } = useVault()
   const { switchChain, isPending: isSwitchingChain } = useSwitchChain()
@@ -33,11 +34,12 @@ export function DestinationVaultFlow({ suggestedAmount }: DestinationVaultFlowPr
     return '0.00'
   }, [suggestedAmount])
 
-  const walletBalance = parseFloat(usdtBalanceFormatted) || 0
-  const vaultBalance = parseFloat(vaultUsdtBalanceFormatted) || 0
+  const walletBalance = parseFloat(stableTokenBalanceFormatted) || 0
+  const vaultBalance = parseFloat(userPositionAssetsFormatted) || 0
+  const idleBalance = parseFloat(vaultIdleAssetsFormatted) || 0
   const strategyBalance = parseFloat(strategyBalanceFormatted) || 0
   const actionableAmount = Math.min(walletBalance, suggestedAmount > 0 ? suggestedAmount : walletBalance)
-  const needsApproval = usdtAllowance <= BigInt(0)
+  const needsApproval = stableTokenAllowance <= BigInt(0)
   const onArbitrum = activeChainKey === 'arbitrum'
 
   return (
@@ -55,9 +57,10 @@ export function DestinationVaultFlow({ suggestedAmount }: DestinationVaultFlowPr
         The migration flow is only complete after you switch to Arbitrum, deposit bridged {stableTokenSymbol} into the destination vault, and invest it into Aave.
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginTop: 12 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, marginTop: 12 }}>
         <Stat label="Wallet" value={`${walletBalance.toFixed(2)} ${stableTokenSymbol}`} />
-        <Stat label="Vault" value={`${vaultBalance.toFixed(2)} ${stableTokenSymbol}`} />
+        <Stat label="Position" value={`${vaultBalance.toFixed(2)} ${stableTokenSymbol}`} />
+        <Stat label="Idle" value={`${idleBalance.toFixed(2)} ${stableTokenSymbol}`} />
         <Stat label="Strategy" value={`${strategyBalance.toFixed(2)} ${stableTokenSymbol}`} />
       </div>
 
@@ -93,24 +96,24 @@ export function DestinationVaultFlow({ suggestedAmount }: DestinationVaultFlowPr
 
         <button
           className="btn btn-cyan"
-          onClick={() => approveUsdt(actionableAmount.toString())}
-          disabled={!onArbitrum || needsApproval === false || actionableAmount <= 0 || isApproving}
+          onClick={() => approveStable(actionableAmount.toString())}
+          disabled={!onArbitrum || needsApproval === false || actionableAmount <= 0 || isApprovingStable}
         >
-          {needsApproval ? (isApproving ? 'Approving…' : `Step 2: Approve ${stableTokenSymbol}`) : 'Step 2: Approved'}
+          {needsApproval ? (isApprovingStable ? 'Approving…' : `Step 2: Approve ${stableTokenSymbol}`) : 'Step 2: Approved'}
         </button>
 
         <button
           className="btn btn-cyan"
-          onClick={() => depositUsdt(actionableAmount.toString())}
-          disabled={!onArbitrum || needsApproval || actionableAmount <= 0 || isDepositingToken}
+          onClick={() => depositStable(actionableAmount.toString())}
+          disabled={!onArbitrum || needsApproval || actionableAmount <= 0 || isDepositingStable}
         >
-          {isDepositingToken ? 'Depositing…' : 'Step 3: Deposit To Arbitrum Vault'}
+          {isDepositingStable ? 'Depositing…' : 'Step 3: Deposit To Arbitrum Vault'}
         </button>
 
         <button
           className="btn btn-amber"
-          onClick={() => invest(Math.max(vaultBalance, 0).toString())}
-          disabled={!onArbitrum || vaultBalance <= 0 || isInvesting}
+          onClick={() => invest(Math.max(idleBalance, 0).toString())}
+          disabled={!onArbitrum || idleBalance <= 0 || isInvesting}
         >
           {isInvesting ? 'Investing…' : 'Step 4: Invest Into Arbitrum Aave'}
         </button>

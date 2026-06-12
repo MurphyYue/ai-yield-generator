@@ -3,8 +3,8 @@ import "./globals.css";
 import { Providers } from "@/components/Providers";
 
 export const metadata: Metadata = {
-  title: "Web3 Vault Dashboard",
-  description: "AI-driven intent-oriented asset management dashboard",
+  title: "Yield Navigator",
+  description: "AI-assisted USDC yield aggregator with operator-managed strategy execution",
 };
 
 export default function RootLayout({

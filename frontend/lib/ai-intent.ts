@@ -1,7 +1,7 @@
 export interface LegacyIntent {
   action: 'deposit' | 'withdraw' | 'unknown'
   amount: number
-  token: 'ETH' | 'USDT' | 'unknown'
+  token: 'USDC' | 'unknown'
   token_address: string
   confidence: 'high' | 'medium' | 'low'
   risk_level?: 'high' | 'medium' | 'low'

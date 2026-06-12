@@ -1,69 +1,65 @@
-import { parseAbi } from 'viem'
+import { keccak256, parseAbi, stringToHex } from 'viem'
 import { type SupportedChainKey, CHAIN_IDS } from './chains'
 import { USDC_ARBITRUM, USDC_BASE } from './aave'
 
 export const VAULT_ABI = parseAbi([
-  'function deposit() external payable',
-  'function withdraw(uint256 amount) external',
-  'function balances(address) external view returns (uint256)',
-  'function depositToken(address token, uint256 amount) external',
-  'function withdrawToken(address token, uint256 sharesToBurn) external',
-  'function depositWithPermit(address token, uint256 amount, address owner, uint256 deadline, uint8 v, bytes32 r, bytes32 s) external',
-  'function getTokenBalance(address token, address user) external view returns (uint256)',
-  'function getShares(address token, address user) external view returns (uint256)',
-  'function shares(address, address) external view returns (uint256)',
-  'function totalShares(address) external view returns (uint256)',
-  'function previewWithdraw(address token, address user) external view returns (uint256 assets)',
-  'function previewDeposit(address token, uint256 amount) external view returns (uint256 sharesToMint)',
-  'function convertToShares(address token, uint256 assets) external view returns (uint256 sharesToBurn)',
-  'function grantManagerRole(address account) external',
-  'function grantOperatorRole(address account) external',
-  'function grantTreasurerRole(address account) external',
-  'function hasManagerRole(address account) external view returns (bool)',
-  'function hasOperatorRole(address account) external view returns (bool)',
-  'function hasTreasurerRole(address account) external view returns (bool)',
-  'function pause() external',
-  'function unpause() external',
+  'function asset() external view returns (address)',
+  'function totalAssets() external view returns (uint256)',
+  'function totalSupply() external view returns (uint256)',
+  'function balanceOf(address account) external view returns (uint256)',
+  'function allowance(address owner, address spender) external view returns (uint256)',
+  'function deposit(uint256 assets, address receiver) external returns (uint256)',
+  'function mint(uint256 shares, address receiver) external returns (uint256)',
+  'function withdraw(uint256 assets, address receiver, address owner) external returns (uint256)',
+  'function redeem(uint256 shares, address receiver, address owner) external returns (uint256)',
+  'function convertToShares(uint256 assets) external view returns (uint256)',
+  'function convertToAssets(uint256 shares) external view returns (uint256)',
+  'function previewDeposit(uint256 assets) external view returns (uint256)',
+  'function previewMint(uint256 shares) external view returns (uint256)',
+  'function previewWithdraw(uint256 assets) external view returns (uint256)',
+  'function previewRedeem(uint256 shares) external view returns (uint256)',
+  'function maxDeposit(address receiver) external view returns (uint256)',
+  'function maxMint(address receiver) external view returns (uint256)',
+  'function maxWithdraw(address owner) external view returns (uint256)',
+  'function maxRedeem(address owner) external view returns (uint256)',
   'function paused() external view returns (bool)',
-  'function blacklist(address account) external',
-  'function unblacklist(address account) external',
-  'function blacklisted(address) external view returns (bool)',
-  'function requestLargeWithdrawal(uint256 amount) external',
-  'function approveLargeWithdrawal(address user, uint256 amount, uint256 nonce) external',
-  'function withdrawalNonce(address) external view returns (uint256)',
-  'function setWithdrawalFee(uint256 newFee) external',
-  'function setLargeWithdrawalThreshold(uint256 newThreshold) external',
-  'function setDepositCap(address token, uint256 cap) external',
-  'function setFeeTreasury(address treasury) external',
-  'function setPerformanceFee(uint256 newFeeBps) external',
+  'function blacklisted(address account) external view returns (bool)',
+  'function depositCap() external view returns (uint256)',
   'function largeWithdrawalThreshold() external view returns (uint256)',
-  'function withdrawalFee() external view returns (uint256)',
   'function performanceFeeBps() external view returns (uint256)',
   'function feeTreasury() external view returns (address)',
-  'function getWithdrawalRequestHash(address user, uint256 amount) external view returns (bytes32)',
-  'function largeWithdrawalApproved(bytes32) external view returns (bool)',
-  'function setStrategy(address _strategy) external',
-  'function invest(address token, uint256 amount) external',
+  'function strategyPrincipal() external view returns (uint256)',
+  'function strategy() external view returns (address)',
+  'function getStrategyBalance() external view returns (uint256)',
+  'function getIdleAssets() external view returns (uint256)',
+  'function withdrawalNonce(address account) external view returns (uint256)',
+  'function hasRole(bytes32 role, address account) external view returns (bool)',
+  'function pause() external',
+  'function unpause() external',
+  'function blacklist(address account) external',
+  'function unblacklist(address account) external',
+  'function requestLargeWithdrawal(uint256 assets, address receiver) external',
+  'function approveLargeWithdrawal(address owner, address receiver, uint256 assets, uint256 nonce) external',
+  'function setDepositCap(uint256 cap) external',
+  'function setLargeWithdrawalThreshold(uint256 newThreshold) external',
+  'function setFeeTreasury(address treasury) external',
+  'function setPerformanceFee(uint256 newFeeBps) external',
+  'function setStrategy(address strategy) external',
+  'function invest(uint256 amount) external',
   'function divest(uint256 amount, uint256 minAmountOut) external',
   'function emergencyDivest() external',
-  'function getTotalBalance(address token) external view returns (uint256)',
-  'function getStrategyBalance() external view returns (uint256)',
-  'function getVaultTokenHoldings(address token) external view returns (uint256)',
-  'function strategy() external view returns (address)',
-  'event Deposited(address indexed user, uint256 amount)',
-  'event Withdrawn(address indexed user, uint256 amount, uint256 fee)',
-  'event TokenDeposited(address indexed user, address indexed token, uint256 amount, uint256 sharesMinted)',
-  'event TokenWithdrawn(address indexed user, address indexed token, uint256 amount, uint256 sharesBurned)',
-  'event Paused(address indexed account)',
-  'event Unpaused(address indexed account)',
-  'event Blacklisted(address indexed account, bool indexed status)',
-  'event LargeWithdrawalApproved(address indexed user, bytes32 indexed requestHash)',
-  'event WithdrawalFeeUpdated(uint256 oldFee, uint256 newFee)',
+  'event Deposit(address indexed sender, address indexed owner, uint256 assets, uint256 shares)',
+  'event Withdraw(address indexed sender, address indexed receiver, address indexed owner, uint256 assets, uint256 shares)',
+  'event StrategySet(address indexed strategy)',
+  'event Invested(uint256 amount)',
+  'event Divested(uint256 requestedAmount, uint256 receivedAmount)',
+  'event DepositCapUpdated(uint256 oldCap, uint256 newCap)',
+  'event LargeWithdrawalRequested(address indexed user, address indexed receiver, uint256 assets, uint256 nonce, bytes32 requestHash)',
+  'event LargeWithdrawalApproved(address indexed user, address indexed receiver, uint256 assets, uint256 nonce, bytes32 requestHash)',
   'event ThresholdUpdated(uint256 oldThreshold, uint256 newThreshold)',
-  'event DepositCapUpdated(address indexed token, uint256 cap)',
   'event PerformanceFeeUpdated(uint256 oldFeeBps, uint256 newFeeBps)',
   'event FeeTreasuryUpdated(address indexed oldTreasury, address indexed newTreasury)',
-  'event PerformanceFeeAccrued(address indexed token, uint256 realizedProfit, uint256 feeAssets, uint256 feeShares)',
+  'event PerformanceFeeAccrued(uint256 realizedProfit, uint256 feeAssets, uint256 feeShares)',
 ])
 
 export const ERC20_ABI = parseAbi([
@@ -97,6 +93,12 @@ export const ERC20_PERMIT_ABI = parseAbi([
   'function DOMAIN_SEPARATOR() external view returns (bytes32)',
   'function version() external view returns (string)',
 ])
+
+export const ROLE_IDS = {
+  manager: keccak256(stringToHex('MANAGER_ROLE')),
+  operator: keccak256(stringToHex('OPERATOR_ROLE')),
+  treasurer: keccak256(stringToHex('TREASURER_ROLE')),
+} as const
 
 export const FALLBACK_VAULT_ADDRESS = '0xf5059a5D33d5853360D16C683c16e67980206f36' as const
 export const FALLBACK_MOCK_TOKEN_ADDRESS = '0x851356ae760d987E095750cCeb3bC6014560891C' as const
@@ -138,10 +140,7 @@ export function getStableTokenSymbolForChain(chainKey: SupportedChainKey): 'USDC
 export function getPermitVersionForToken(tokenAddress: `0x${string}`): string {
   const normalized = tokenAddress.toLowerCase()
 
-  if (
-    normalized === USDC_BASE.toLowerCase() ||
-    normalized === USDC_ARBITRUM.toLowerCase()
-  ) {
+  if (normalized === USDC_BASE.toLowerCase() || normalized === USDC_ARBITRUM.toLowerCase()) {
     return '2'
   }
 

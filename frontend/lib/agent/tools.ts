@@ -68,28 +68,25 @@ export const getUserPositions = tool(
     try {
       const baseVault = getVaultAddressForChain('base')
       const arbVault = getVaultAddressForChain('arbitrum')
-      const baseUsdc = getStableTokenAddressForChain('base')
-      const arbUsdc = getStableTokenAddressForChain('arbitrum')
 
       const baseClient = createPublicClient({ chain: base, transport: http(getRpc('base')) })
       const arbClient = createPublicClient({ chain: arbitrum, transport: http(getRpc('arbitrum')) })
 
       const addr = walletAddress as `0x${string}`
 
-      const [
-        baseUserBal,
-        baseStrategyBal,
-        baseIdleBal,
-        arbUserBal,
-        arbStrategyBal,
-        arbIdleBal,
-      ] = await Promise.all([
-        baseClient.readContract({ address: baseVault, abi: VAULT_ABI, functionName: 'getTokenBalance', args: [baseUsdc, addr] }),
-        baseClient.readContract({ address: baseVault, abi: VAULT_ABI, functionName: 'getStrategyBalance' }),
-        baseClient.readContract({ address: baseVault, abi: VAULT_ABI, functionName: 'getVaultTokenHoldings', args: [baseUsdc] }),
-        arbClient.readContract({ address: arbVault, abi: VAULT_ABI, functionName: 'getTokenBalance', args: [arbUsdc, addr] }),
-        arbClient.readContract({ address: arbVault, abi: VAULT_ABI, functionName: 'getStrategyBalance' }),
-        arbClient.readContract({ address: arbVault, abi: VAULT_ABI, functionName: 'getVaultTokenHoldings', args: [arbUsdc] }),
+      const [baseUserShares, baseStrategyBal, baseIdleBal, arbUserShares, arbStrategyBal, arbIdleBal] =
+        await Promise.all([
+          baseClient.readContract({ address: baseVault, abi: VAULT_ABI, functionName: 'balanceOf', args: [addr] }),
+          baseClient.readContract({ address: baseVault, abi: VAULT_ABI, functionName: 'getStrategyBalance' }),
+          baseClient.readContract({ address: baseVault, abi: VAULT_ABI, functionName: 'getIdleAssets' }),
+          arbClient.readContract({ address: arbVault, abi: VAULT_ABI, functionName: 'balanceOf', args: [addr] }),
+          arbClient.readContract({ address: arbVault, abi: VAULT_ABI, functionName: 'getStrategyBalance' }),
+          arbClient.readContract({ address: arbVault, abi: VAULT_ABI, functionName: 'getIdleAssets' }),
+        ])
+
+      const [baseUserBal, arbUserBal] = await Promise.all([
+        baseClient.readContract({ address: baseVault, abi: VAULT_ABI, functionName: 'previewRedeem', args: [baseUserShares] }),
+        arbClient.readContract({ address: arbVault, abi: VAULT_ABI, functionName: 'previewRedeem', args: [arbUserShares] }),
       ])
 
       // USDC uses 6 decimals

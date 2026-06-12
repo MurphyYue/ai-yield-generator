@@ -37,10 +37,9 @@ export function AIPanel({ onIntentParsed }: AIPanelProps) {
   const [bridgeCompleted, setBridgeCompleted] = useState(false)
 
   const {
-    vaultBalanceFormatted,
-    usdtBalanceFormatted,
-    vaultUsdtBalanceFormatted,
-    vaultTokenHoldingsFormatted,
+    stableTokenSymbol,
+    userPositionAssetsFormatted,
+    vaultIdleAssetsFormatted,
     strategyBalanceFormatted,
     invest,
     divest,
@@ -190,7 +189,7 @@ export function AIPanel({ onIntentParsed }: AIPanelProps) {
       if (isStrategyIntent(parsedIntent)) {
         const hasReasoning = parsedIntent.strategy_logic && parsedIntent.strategy_logic.length > 20
         if (!hasReasoning && (parsedIntent.action === 'unknown' || parsedIntent.confidence === 'low')) {
-          setError('The advisor needs a clearer question. Try "should I invest?" or "invest 500 USDT".')
+          setError(`The advisor needs a clearer question. Try "should I invest?" or "invest 500 ${stableTokenSymbol}".`)
         }
         onIntentParsed?.(parsedIntent)
         return
@@ -200,7 +199,7 @@ export function AIPanel({ onIntentParsed }: AIPanelProps) {
       onIntentParsed?.(parsedIntent)
 
       if (parsedIntent.action === 'unknown' || parsedIntent.confidence === 'low') {
-        setError('Could not understand. Try "deposit 1 ETH" or "withdraw 50 USDT".')
+        setError(`Could not understand. Try "deposit 500 ${stableTokenSymbol}" or "withdraw 50 ${stableTokenSymbol}".`)
       }
     } catch {
       setError('Network error. Please try again.')
@@ -548,9 +547,9 @@ export function AIPanel({ onIntentParsed }: AIPanelProps) {
             <TransactionCard
               actionData={intent.action_data}
               strategyLogic={intent.strategy_logic}
-              vaultIdle={parseFloat(vaultTokenHoldingsFormatted) || 0}
+              vaultIdle={parseFloat(vaultIdleAssetsFormatted) || 0}
               strategyBalance={parseFloat(strategyBalanceFormatted) || 0}
-              userUsdtBalance={parseFloat(vaultUsdtBalanceFormatted) || 0}
+              userUsdtBalance={parseFloat(userPositionAssetsFormatted) || 0}
               onExecute={() => {
                 if (intent.action_data.type === 'divest') {
                   divest(intent.action_data.amount.toString())

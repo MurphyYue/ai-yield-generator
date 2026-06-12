@@ -38,10 +38,11 @@ export function TransactionCard({
   onReevaluate,
 }: TransactionCardProps) {
   const {
-    usdtAllowance,
-    approveUsdt,
-    isApproving,
-    isApproveSuccess,
+    stableTokenAllowance,
+    approveStable,
+    isApprovingStable,
+    isApproveStableSuccess,
+    stableTokenSymbol,
     isInvesting,
     isDivesting,
   } = useVault()
@@ -58,7 +59,7 @@ export function TransactionCard({
   const isInvestAction = actionData.type === 'invest'
   const isDivestAction = actionData.type === 'divest'
   const needsAllowance =
-    isInvestAction && usdtAllowance < parseUnits(actionData.amount.toString(), 6)
+    isInvestAction && stableTokenAllowance < parseUnits(actionData.amount.toString(), 6)
 
   const riskTone = useMemo(() => {
     if (actionData.risk_level === 'high') {
@@ -188,14 +189,14 @@ export function TransactionCard({
       )}
 
       <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-        {isInvestAction && needsAllowance && !isApproveSuccess ? (
+        {isInvestAction && needsAllowance && !isApproveStableSuccess ? (
           <button
             className="btn btn-cyan"
             style={{ flex: 1 }}
-            onClick={() => approveUsdt(actionData.amount.toString())}
-            disabled={isApproving}
+            onClick={() => approveStable(actionData.amount.toString())}
+            disabled={isApprovingStable}
           >
-            {isApproving ? 'Approving…' : 'Step 1: Approve USDT'}
+            {isApprovingStable ? 'Approving…' : `Step 1: Approve ${stableTokenSymbol}`}
           </button>
         ) : (
           <button
