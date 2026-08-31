@@ -88,6 +88,15 @@ At the start of Stage 5:
 - Frontend TypeScript passes; lint and clean-build runtime errors remain.
 - Ponder is preserved in the monorepo but remains V3-specific until its Stage 5 rewrite.
 
+After the contract-only Lean V4 policy-removal slice on `fix/v4-accounting`:
+
+- V4 unit suite: 16 passing, 1 failing.
+- Full non-fork local suite: 79 passing, 1 failing.
+- The deleted policy tests account for the lower test count; fewer tests are not evidence of greater safety.
+- The slippage-authority regression now reaches and passes the intended operator path.
+- The donation/zero-share defect remains deliberately failing until its accounting policy is implemented.
+- Frontend and indexer integration still use legacy V3/policy surfaces, so this branch is not deployable.
+
 No Stage 5 release claim is valid until the gates in [`todo.md`](./todo.md) pass.
 
 ## Development Commands

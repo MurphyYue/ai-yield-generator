@@ -63,7 +63,7 @@ contract DeployScript is Script {
             console.log("MockERC20 deployed at:", tokenAddress);
         }
 
-        VaultV4 vault = new VaultV4(tokenAddress, deployer);
+        VaultV4 vault = new VaultV4(tokenAddress);
         console.log("VaultV4 deployed at:", address(vault));
 
         AaveStrategy aaveStrategy = new AaveStrategy(address(vault), tokenAddress, aavePoolAddress);

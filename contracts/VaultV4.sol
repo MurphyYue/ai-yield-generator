@@ -3,7 +3,6 @@ pragma solidity ^0.8.24;
 
 import "@openzeppelin/contracts/access/AccessControl.sol";
 import "@openzeppelin/contracts/token/ERC20/extensions/ERC4626.sol";
-import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/utils/Pausable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
@@ -16,46 +15,23 @@ contract VaultV4 is ERC4626, AccessControl, Pausable, ReentrancyGuard {
     bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
     bytes32 public constant TREASURER_ROLE = keccak256("TREASURER_ROLE");
 
-    uint256 public constant MAX_PERFORMANCE_FEE = 2_000;
-
-    mapping(address => bool) public blacklisted;
-    mapping(bytes32 => bool) public largeWithdrawalApproved;
-    mapping(address => uint256) public withdrawalNonce;
-
     uint256 public depositCap;
-    uint256 public largeWithdrawalThreshold;
-    uint256 public performanceFeeBps = 1_000;
     uint256 public strategyPrincipal;
-    address public feeTreasury;
 
     IStrategy public strategy;
 
-    event Blacklisted(address indexed account, bool indexed status);
     event StrategySet(address indexed strategy);
     event Invested(uint256 amount);
     event Divested(uint256 requestedAmount, uint256 receivedAmount);
     event DepositCapUpdated(uint256 oldCap, uint256 newCap);
-    event LargeWithdrawalRequested(address indexed user, address indexed receiver, uint256 assets, uint256 nonce, bytes32 requestHash);
-    event LargeWithdrawalApproved(address indexed user, address indexed receiver, uint256 assets, uint256 nonce, bytes32 requestHash);
-    event ThresholdUpdated(uint256 oldThreshold, uint256 newThreshold);
-    event PerformanceFeeUpdated(uint256 oldFeeBps, uint256 newFeeBps);
-    event FeeTreasuryUpdated(address indexed oldTreasury, address indexed newTreasury);
-    event PerformanceFeeAccrued(uint256 realizedProfit, uint256 feeAssets, uint256 feeShares);
 
-    constructor(address asset_, address initialTreasury)
-        ERC20("Yield Navigator Vault Share", "ynUSDC")
-        ERC4626(IERC20(asset_))
-    {
+    constructor(address asset_) ERC20("Yield Navigator Vault Share", "ynUSDC") ERC4626(IERC20(asset_)) {
         require(asset_ != address(0), "Invalid asset");
-        require(initialTreasury != address(0), "Invalid treasury");
 
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
         _grantRole(MANAGER_ROLE, msg.sender);
         _grantRole(OPERATOR_ROLE, msg.sender);
         _grantRole(TREASURER_ROLE, msg.sender);
-
-        feeTreasury = initialTreasury;
-        largeWithdrawalThreshold = 10_000 * 10 ** IERC20Metadata(asset_).decimals();
     }
 
     function pause() external onlyRole(MANAGER_ROLE) whenNotPaused {
@@ -82,16 +58,6 @@ contract VaultV4 is ERC4626, AccessControl, Pausable, ReentrancyGuard {
         _revokeRole(role, account);
     }
 
-    function blacklist(address account) external onlyRole(MANAGER_ROLE) {
-        blacklisted[account] = true;
-        emit Blacklisted(account, true);
-    }
-
-    function unblacklist(address account) external onlyRole(MANAGER_ROLE) {
-        blacklisted[account] = false;
-        emit Blacklisted(account, false);
-    }
-
     function totalAssets() public view override returns (uint256) {
         uint256 idleAssets = IERC20(asset()).balanceOf(address(this));
         if (address(strategy) == address(0)) {
@@ -100,8 +66,8 @@ contract VaultV4 is ERC4626, AccessControl, Pausable, ReentrancyGuard {
         return idleAssets + strategy.totalAssets();
     }
 
-    function maxDeposit(address receiver) public view override returns (uint256) {
-        if (paused() || blacklisted[receiver]) {
+    function maxDeposit(address) public view override returns (uint256) {
+        if (paused()) {
             return 0;
         }
 
@@ -126,7 +92,7 @@ contract VaultV4 is ERC4626, AccessControl, Pausable, ReentrancyGuard {
     }
 
     function maxWithdraw(address owner) public view override returns (uint256) {
-        if (paused() || blacklisted[owner]) {
+        if (paused()) {
             return 0;
         }
 
@@ -136,7 +102,7 @@ contract VaultV4 is ERC4626, AccessControl, Pausable, ReentrancyGuard {
     }
 
     function maxRedeem(address owner) public view override returns (uint256) {
-        if (paused() || blacklisted[owner]) {
+        if (paused()) {
             return 0;
         }
 
@@ -147,14 +113,10 @@ contract VaultV4 is ERC4626, AccessControl, Pausable, ReentrancyGuard {
     }
 
     function deposit(uint256 assets, address receiver) public override nonReentrant whenNotPaused returns (uint256) {
-        _requireNotBlacklisted(_msgSender());
-        _requireNotBlacklisted(receiver);
         return super.deposit(assets, receiver);
     }
 
     function mint(uint256 shares, address receiver) public override nonReentrant whenNotPaused returns (uint256) {
-        _requireNotBlacklisted(_msgSender());
-        _requireNotBlacklisted(receiver);
         return super.mint(shares, receiver);
     }
 
@@ -165,9 +127,6 @@ contract VaultV4 is ERC4626, AccessControl, Pausable, ReentrancyGuard {
         whenNotPaused
         returns (uint256)
     {
-        _requireNotBlacklisted(_msgSender());
-        _requireNotBlacklisted(receiver);
-        _requireNotBlacklisted(owner);
         return super.withdraw(assets, receiver, owner);
     }
 
@@ -178,9 +137,6 @@ contract VaultV4 is ERC4626, AccessControl, Pausable, ReentrancyGuard {
         whenNotPaused
         returns (uint256)
     {
-        _requireNotBlacklisted(_msgSender());
-        _requireNotBlacklisted(receiver);
-        _requireNotBlacklisted(owner);
         return super.redeem(shares, receiver, owner);
     }
 
@@ -195,52 +151,6 @@ contract VaultV4 is ERC4626, AccessControl, Pausable, ReentrancyGuard {
         uint256 oldCap = depositCap;
         depositCap = newCap;
         emit DepositCapUpdated(oldCap, newCap);
-    }
-
-    function setLargeWithdrawalThreshold(uint256 newThreshold) external onlyRole(TREASURER_ROLE) {
-        uint256 oldThreshold = largeWithdrawalThreshold;
-        largeWithdrawalThreshold = newThreshold;
-        emit ThresholdUpdated(oldThreshold, newThreshold);
-    }
-
-    function setFeeTreasury(address newTreasury) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        require(newTreasury != address(0), "Invalid treasury");
-        address oldTreasury = feeTreasury;
-        feeTreasury = newTreasury;
-        emit FeeTreasuryUpdated(oldTreasury, newTreasury);
-    }
-
-    function setPerformanceFee(uint256 newFeeBps) external onlyRole(TREASURER_ROLE) {
-        require(newFeeBps <= MAX_PERFORMANCE_FEE, "Fee exceeds maximum");
-        uint256 oldFeeBps = performanceFeeBps;
-        performanceFeeBps = newFeeBps;
-        emit PerformanceFeeUpdated(oldFeeBps, newFeeBps);
-    }
-
-    function getWithdrawalRequestHash(address owner, address receiver, uint256 assets, uint256 nonce)
-        public
-        pure
-        returns (bytes32)
-    {
-        return keccak256(abi.encode(owner, receiver, assets, nonce));
-    }
-
-    function requestLargeWithdrawal(uint256 assets, address receiver) external whenNotPaused {
-        _requireNotBlacklisted(msg.sender);
-        require(assets >= largeWithdrawalThreshold, "Below threshold");
-
-        uint256 nonce = withdrawalNonce[msg.sender];
-        bytes32 requestHash = getWithdrawalRequestHash(msg.sender, receiver, assets, nonce);
-        emit LargeWithdrawalRequested(msg.sender, receiver, assets, nonce, requestHash);
-    }
-
-    function approveLargeWithdrawal(address owner, address receiver, uint256 assets, uint256 nonce)
-        external
-        onlyRole(TREASURER_ROLE)
-    {
-        bytes32 requestHash = getWithdrawalRequestHash(owner, receiver, assets, nonce);
-        largeWithdrawalApproved[requestHash] = true;
-        emit LargeWithdrawalApproved(owner, receiver, assets, nonce, requestHash);
     }
 
     function invest(uint256 amount) external nonReentrant whenNotPaused onlyRole(OPERATOR_ROLE) {
@@ -278,18 +188,6 @@ contract VaultV4 is ERC4626, AccessControl, Pausable, ReentrancyGuard {
 
         strategyPrincipal = principalBefore - principalPortion;
 
-        uint256 realizedProfit = received > principalPortion ? received - principalPortion : 0;
-        if (realizedProfit > 0 && performanceFeeBps > 0) {
-            uint256 feeAssets = (realizedProfit * performanceFeeBps) / 10_000;
-            if (feeAssets > 0) {
-                uint256 feeShares = previewDeposit(feeAssets);
-                if (feeShares > 0) {
-                    _mint(feeTreasury, feeShares);
-                    emit PerformanceFeeAccrued(realizedProfit, feeAssets, feeShares);
-                }
-            }
-        }
-
         emit Divested(amount, received);
     }
 
@@ -317,16 +215,6 @@ contract VaultV4 is ERC4626, AccessControl, Pausable, ReentrancyGuard {
     {
         require(IERC20(asset()).balanceOf(address(this)) >= assets, "Insufficient vault liquidity - divest first");
 
-        if (assets >= largeWithdrawalThreshold) {
-            uint256 nonce = withdrawalNonce[owner];
-            bytes32 requestHash = getWithdrawalRequestHash(owner, receiver, assets, nonce);
-            require(largeWithdrawalApproved[requestHash], "Large withdrawal requires treasurer approval");
-            delete largeWithdrawalApproved[requestHash];
-            unchecked {
-                withdrawalNonce[owner] = nonce + 1;
-            }
-        }
-
         super._withdraw(caller, receiver, owner, assets, shares);
     }
 
@@ -335,17 +223,7 @@ contract VaultV4 is ERC4626, AccessControl, Pausable, ReentrancyGuard {
             if (paused()) {
                 revert("Vault is paused");
             }
-            if (from != address(0) && blacklisted[from]) {
-                revert("Address is blacklisted");
-            }
-            if (to != address(0) && blacklisted[to]) {
-                revert("Address is blacklisted");
-            }
         }
         super._update(from, to, value);
-    }
-
-    function _requireNotBlacklisted(address account) internal view {
-        require(!blacklisted[account], "Address is blacklisted");
     }
 }

@@ -2,6 +2,8 @@
 pragma solidity ^0.8.24;
 
 import "forge-std/Test.sol";
+import {ERC4626} from "@openzeppelin/contracts/token/ERC20/extensions/ERC4626.sol";
+import "@openzeppelin/contracts/utils/Pausable.sol";
 import "../contracts/VaultV4.sol";
 import "../contracts/MockERC20.sol";
 import "../contracts/IStrategy.sol";
@@ -76,7 +78,6 @@ contract VaultV4Test is Test {
     address public manager;
     address public operator;
     address public treasurer;
-    address public feeTreasury;
     address public user1;
     address public user2;
     address public hacker;
@@ -89,13 +90,12 @@ contract VaultV4Test is Test {
         manager = makeAddr("manager");
         operator = makeAddr("operator");
         treasurer = makeAddr("treasurer");
-        feeTreasury = makeAddr("feeTreasury");
         user1 = makeAddr("user1");
         user2 = makeAddr("user2");
         hacker = makeAddr("hacker");
 
         usdc = new MockERC20(INITIAL_SUPPLY);
-        vault = new VaultV4(address(usdc), feeTreasury);
+        vault = new VaultV4(address(usdc));
         strategy = new StrategyStub(address(vault), address(usdc));
 
         vault.grantManagerRole(manager);
@@ -117,12 +117,12 @@ contract VaultV4Test is Test {
         vault.deposit(amount, user);
     }
 
-    function _investAsTreasurer(uint256 amount) internal {
+    function _investAsOperator(uint256 amount) internal {
         vm.prank(operator);
         vault.invest(amount);
     }
 
-    function _divestAsTreasurer(uint256 amount, uint256 minAmountOut) internal {
+    function _divestAsOperator(uint256 amount, uint256 minAmountOut) internal {
         vm.prank(operator);
         vault.divest(amount, minAmountOut);
     }
@@ -141,7 +141,7 @@ contract VaultV4Test is Test {
         uint256 shares = vault.balanceOf(user1);
         uint256 beforeAssets = vault.previewRedeem(shares);
 
-        _investAsTreasurer(DEPOSIT);
+        _investAsOperator(DEPOSIT);
         deal(address(usdc), address(strategy), DEPOSIT + 10 * UNIT);
 
         uint256 afterAssets = vault.previewRedeem(shares);
@@ -166,7 +166,7 @@ contract VaultV4Test is Test {
         _depositFor(user1, DEPOSIT);
         _depositFor(user2, DEPOSIT);
 
-        _investAsTreasurer(2 * DEPOSIT);
+        _investAsOperator(2 * DEPOSIT);
         deal(address(usdc), address(strategy), 2 * DEPOSIT + 10 * UNIT);
 
         assertApproxEqAbs(vault.previewRedeem(vault.balanceOf(user1)), vault.previewRedeem(vault.balanceOf(user2)), 1);
@@ -186,17 +186,17 @@ contract VaultV4Test is Test {
 
     function testWithdrawRevertsIfIdleLiquidityInsufficient() public {
         _depositFor(user1, DEPOSIT);
-        _investAsTreasurer(DEPOSIT);
+        _investAsOperator(DEPOSIT);
 
         vm.prank(user1);
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(ERC4626.ERC4626ExceededMaxWithdraw.selector, user1, 1, 0));
         vault.withdraw(1, user1, user1);
     }
 
     function testDivestThenWithdrawSucceeds() public {
         _depositFor(user1, DEPOSIT);
-        _investAsTreasurer(DEPOSIT);
-        _divestAsTreasurer(DEPOSIT, DEPOSIT);
+        _investAsOperator(DEPOSIT);
+        _divestAsOperator(DEPOSIT, DEPOSIT);
 
         uint256 shares = vault.balanceOf(user1);
         vm.prank(user1);
@@ -208,46 +208,22 @@ contract VaultV4Test is Test {
 
     function testDivestSlippageReverts() public {
         _depositFor(user1, DEPOSIT);
-        _investAsTreasurer(DEPOSIT);
+        _investAsOperator(DEPOSIT);
 
-        vm.prank(treasurer);
+        vm.prank(operator);
         vm.expectRevert("Slippage: received less than minAmountOut");
         vault.divest(DEPOSIT, DEPOSIT + 1);
     }
 
-    function testLargeWithdrawalNonceFlow() public {
-        vm.prank(treasurer);
-        vault.setLargeWithdrawalThreshold(10 * UNIT);
-
-        _depositFor(user1, 15 * UNIT);
-
-        vm.prank(user1);
-        vault.requestLargeWithdrawal(12 * UNIT, user1);
-
-        vm.prank(treasurer);
-        vault.approveLargeWithdrawal(user1, user1, 12 * UNIT, 0);
+    function testWithdrawalDoesNotRequirePolicyApproval() public {
+        uint256 depositAmount = 15_000 * UNIT;
+        uint256 withdrawalAmount = 12_000 * UNIT;
+        _depositFor(user1, depositAmount);
 
         vm.prank(user1);
-        vault.withdraw(12 * UNIT, user1, user1);
+        vault.withdraw(withdrawalAmount, user1, user1);
 
-        assertEq(vault.withdrawalNonce(user1), 1);
-    }
-
-    function testLargeWithdrawalWrongNonceReverts() public {
-        vm.prank(treasurer);
-        vault.setLargeWithdrawalThreshold(10 * UNIT);
-
-        _depositFor(user1, 15 * UNIT);
-
-        vm.prank(user1);
-        vault.requestLargeWithdrawal(12 * UNIT, user1);
-
-        vm.prank(treasurer);
-        vault.approveLargeWithdrawal(user1, user1, 12 * UNIT, 1);
-
-        vm.prank(user1);
-        vm.expectRevert("Large withdrawal requires treasurer approval");
-        vault.withdraw(12 * UNIT, user1, user1);
+        assertEq(usdc.balanceOf(user1), 500_000 * UNIT - depositAmount + withdrawalAmount);
     }
 
     function testInvestRespectsPause() public {
@@ -256,26 +232,26 @@ contract VaultV4Test is Test {
         vm.prank(manager);
         vault.pause();
 
-        vm.prank(treasurer);
-        vm.expectRevert();
+        vm.prank(operator);
+        vm.expectRevert(Pausable.EnforcedPause.selector);
         vault.invest(DEPOSIT);
     }
 
     function testDivestRespectsPause() public {
         _depositFor(user1, DEPOSIT);
-        _investAsTreasurer(DEPOSIT);
+        _investAsOperator(DEPOSIT);
 
         vm.prank(manager);
         vault.pause();
 
         vm.prank(operator);
-        vm.expectRevert();
+        vm.expectRevert(Pausable.EnforcedPause.selector);
         vault.divest(DEPOSIT, DEPOSIT);
     }
 
     function testEmergencyDivestWhilePaused() public {
         _depositFor(user1, DEPOSIT);
-        _investAsTreasurer(DEPOSIT);
+        _investAsOperator(DEPOSIT);
 
         vm.prank(manager);
         vault.pause();
@@ -302,88 +278,41 @@ contract VaultV4Test is Test {
         assertEq(vault.maxDeposit(user2), 50 * UNIT);
     }
 
-    function testPerformanceFeeOnRealizedYieldOnly() public {
+    function testDivestWithYieldDoesNotMintShares() public {
         _depositFor(user1, DEPOSIT);
-        _investAsTreasurer(DEPOSIT);
+        _investAsOperator(DEPOSIT);
 
-        deal(address(usdc), address(strategy), DEPOSIT + 20 * UNIT);
-        uint256 treasurySharesBefore = vault.balanceOf(feeTreasury);
-
-        _divestAsTreasurer(DEPOSIT + 20 * UNIT, DEPOSIT + 20 * UNIT);
-
-        assertGt(vault.balanceOf(feeTreasury), treasurySharesBefore);
-    }
-
-    function testNoPerformanceFeeWhenNoProfit() public {
-        _depositFor(user1, DEPOSIT);
-        _investAsTreasurer(DEPOSIT);
-        _divestAsTreasurer(DEPOSIT, DEPOSIT);
-
-        assertEq(vault.balanceOf(feeTreasury), 0);
-    }
-
-    function testTreasuryReceivesSharesNotAssets() public {
-        _depositFor(user1, DEPOSIT);
-        _investAsTreasurer(DEPOSIT);
-
-        deal(address(usdc), address(strategy), DEPOSIT + 10 * UNIT);
-        uint256 treasuryUsdcBefore = usdc.balanceOf(feeTreasury);
-
-        _divestAsTreasurer(DEPOSIT + 10 * UNIT, DEPOSIT + 10 * UNIT);
-
-        assertEq(usdc.balanceOf(feeTreasury), treasuryUsdcBefore);
-        assertGt(vault.balanceOf(feeTreasury), 0);
-    }
-
-    function testUserReceivesNetYieldAfterFee() public {
-        _depositFor(user1, DEPOSIT);
-        _investAsTreasurer(DEPOSIT);
-
-        deal(address(usdc), address(strategy), DEPOSIT + 10 * UNIT);
-        _divestAsTreasurer(DEPOSIT + 10 * UNIT, DEPOSIT + 10 * UNIT);
-
-        uint256 assets = vault.previewRedeem(vault.balanceOf(user1));
-        assertGt(assets, DEPOSIT);
-        assertLt(assets, DEPOSIT + 10 * UNIT);
-    }
-
-    function testPerformanceFeeRespectsCap() public {
-        vm.prank(treasurer);
-        vm.expectRevert("Fee exceeds maximum");
-        vault.setPerformanceFee(2_001);
-    }
-
-    function testSetFeeTreasuryAdminOnly() public {
-        vm.prank(hacker);
-        vm.expectRevert();
-        vault.setFeeTreasury(hacker);
-    }
-
-    function testSetPerformanceFeeTreasurerOnly() public {
-        vm.prank(hacker);
-        vm.expectRevert();
-        vault.setPerformanceFee(500);
-    }
-
-    function testMultipleUsersShareNetYieldAndTreasuryGetsFeeShares() public {
-        _depositFor(user1, DEPOSIT);
-        _depositFor(user2, DEPOSIT);
-        _investAsTreasurer(2 * DEPOSIT);
-
-        deal(address(usdc), address(strategy), 2 * DEPOSIT + 20 * UNIT);
-        _divestAsTreasurer(2 * DEPOSIT + 20 * UNIT, 2 * DEPOSIT + 20 * UNIT);
-
-        assertGt(vault.balanceOf(feeTreasury), 0);
-        assertApproxEqAbs(vault.previewRedeem(vault.balanceOf(user1)), vault.previewRedeem(vault.balanceOf(user2)), 1);
-    }
-
-    function testDivestWithSlippageAndFee() public {
-        _depositFor(user1, DEPOSIT);
-        _investAsTreasurer(DEPOSIT);
-
+        uint256 supplyBefore = vault.totalSupply();
+        uint256 userSharesBefore = vault.balanceOf(user1);
         deal(address(usdc), address(strategy), DEPOSIT + 5 * UNIT);
-        _divestAsTreasurer(DEPOSIT + 5 * UNIT, DEPOSIT + 5 * UNIT);
 
-        assertGt(vault.balanceOf(feeTreasury), 0);
+        _divestAsOperator(DEPOSIT + 5 * UNIT, DEPOSIT + 5 * UNIT);
+
+        assertEq(vault.totalSupply(), supplyBefore);
+        assertEq(vault.balanceOf(user1), userSharesBefore);
+        // ERC-4626 conversion rounds down, and OpenZeppelin's virtual asset can
+        // make the redeemable amount one raw USDC unit below the nominal yield.
+        assertApproxEqAbs(vault.previewRedeem(userSharesBefore), DEPOSIT + 5 * UNIT, 1);
+    }
+
+    function testShareTransferAllowedWhileActive() public {
+        _depositFor(user1, DEPOSIT);
+
+        vm.prank(user1);
+        vault.transfer(user2, 25 * UNIT);
+
+        assertEq(vault.balanceOf(user1), 75 * UNIT);
+        assertEq(vault.balanceOf(user2), 25 * UNIT);
+    }
+
+    function testShareTransferRevertsWhilePaused() public {
+        _depositFor(user1, DEPOSIT);
+
+        vm.prank(manager);
+        vault.pause();
+
+        vm.prank(user1);
+        vm.expectRevert("Vault is paused");
+        vault.transfer(user2, 25 * UNIT);
     }
 }

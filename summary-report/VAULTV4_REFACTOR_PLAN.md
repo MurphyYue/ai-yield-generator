@@ -1,5 +1,7 @@
 # VaultV4 Refactor Plan
 
+> **Historical Stage 4 plan — superseded for implementation.** Stage 5 uses the accepted Lean V4 policy in [`todo.md`](../todo.md) and [`docs/STAGE5_ARCHITECTURE.md`](../docs/STAGE5_ARCHITECTURE.md). In particular, performance fees, large-withdrawal approval, blacklist restrictions, and dual-chain deployment are no longer release requirements. This file is preserved as design history, not active authority.
+
 **Source**: `summary-report/VAULTV3_ISSUES_REPORT.md`  
 **Target file**: `contracts/VaultV4.sol`  
 **Primary asset**: USDC only  

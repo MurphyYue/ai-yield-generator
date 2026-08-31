@@ -2,7 +2,9 @@
 
 **Status:** In progress
 
-**Active branch:** `stage-5`
+**Release/base branch:** `stage-5`
+
+**Current work branch:** `fix/v4-accounting`
 
 **Target release:** `v0.5.0`
 
@@ -59,7 +61,7 @@ Stage 5 keeps:
 - [x] Import Ponder as normal monorepo history without a nested `.git` directory.
 - [x] Replace obsolete README product claims.
 - [x] Record the Stage 5 architecture and threat model.
-- [ ] Commit and push the Stage 5 source-of-truth documents.
+- [x] Commit and push the Stage 5 source-of-truth documents.
 
 ## Stage 5.1 — Lean VaultV4 Specification and Corrections
 

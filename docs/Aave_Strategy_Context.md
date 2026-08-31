@@ -1,5 +1,7 @@
 # Aave Strategy Context
 
+> **Historical Stage 4 AI policy — excluded from the Stage 5 runtime knowledge base.** Its cross-chain migration recommendations conflict with Stage 5's Base-only, read-only Vault Evidence Explainer. The current authority is [`STAGE5_ARCHITECTURE.md`](./STAGE5_ARCHITECTURE.md).
+
 ## Purpose
 
 This document is the knowledge base policy for the LangGraph AI strategy advisor (Days 15-19).
