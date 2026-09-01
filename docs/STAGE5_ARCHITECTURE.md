@@ -74,6 +74,21 @@ The live canary uses explicit operator-managed liquidity:
 
 This limitation is part of the product UI and trust model, not an implementation detail to hide.
 
+### Asset, share, and rounding units
+
+- The underlying asset must report 6 decimals. Deployment with another decimal model is rejected.
+- USDC assets and `depositCap` values use 6 decimals.
+- Vault shares use 12 decimals because `_decimalsOffset()` is fixed at `6`.
+- At an empty honest vault, 1 USDC (`1e6` assets) mints 1 displayed ynUSDC (`1e12` raw shares).
+
+The virtual offset makes donation manipulation expensive, but economics alone is not the acceptance rule. Before transferring assets, VaultV4 rejects any nonzero deposit whose conversion rounds to zero shares. OpenZeppelin's ceiling-rounded `previewMint` with positive virtual terms ensures every positive mint requires at least one raw asset unit; seeded and donated fuzz states exercise that property.
+
+Stage 5 does not impose a fixed on-chain minimum because a fixed asset amount cannot guarantee a nonzero share result at every exchange rate. The Console operational minimum is 1 USDC. Within the 50-USDC canary domain, let pre-deposit assets be `A <= 49e6`, raw shares be `S`, virtual shares be `M = 1e6`, and the victim deposit be `u >= 1e6`. If `q = floor(u(S + M) / (A + 1))` and `e = u(S + M) - q(A + 1)`, the victim's immediate round-trip loss is `ceil(e / (S + M + q))`. Here `e <= 49e6` and `S + M + q >= 1,020,408`, so the loss is at most 49 raw USDC units (`0.000049 USDC`). The implementation test found no violation over 10,000 fuzzed one-depositor/donation/deposit states. This is a scoped canary bound, not a universal ERC-4626 guarantee.
+
+The attacker-profit fuzz domain is deliberately narrower than a general economic proof: one attacker seeds `1` raw unit through 10,000 USDC, makes one direct donation from `1` raw unit through 100,000 USDC, and is followed by one victim depositing `1` raw unit through 100,000 USDC. Across 10,000 generated cases, no positive attacker return was observed when the attacker redeemed either before or after the victim. Multi-victim, partial, interleaved, and MEV sequences still require the later stateful invariant work.
+
+Direct ERC-4626 `deposit` has no `minShares` argument. A transaction can therefore face exchange-rate movement between simulation and mining even though zero-share deposits are rejected. An atomic slippage router or `depositWithMinShares` is deferred and remains a disclosed production limitation.
+
 ## Lean V4 Policy
 
 Stage 5 removes performance fees, large-withdrawal approval, and blacklist restrictions.

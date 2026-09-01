@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 import "@openzeppelin/contracts/access/AccessControl.sol";
 import "@openzeppelin/contracts/token/ERC20/extensions/ERC4626.sol";
+import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/utils/Pausable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
@@ -10,6 +11,9 @@ import "./IStrategy.sol";
 
 contract VaultV4 is ERC4626, AccessControl, Pausable, ReentrancyGuard {
     using SafeERC20 for IERC20;
+
+    uint8 internal constant REQUIRED_ASSET_DECIMALS = 6;
+    uint8 internal constant SHARE_DECIMALS_OFFSET = 6;
 
     bytes32 public constant MANAGER_ROLE = keccak256("MANAGER_ROLE");
     bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
@@ -28,8 +32,16 @@ contract VaultV4 is ERC4626, AccessControl, Pausable, ReentrancyGuard {
     event Divested(uint256 requestedAmount, uint256 receivedAmount);
     event DepositCapUpdated(uint256 oldCap, uint256 newCap);
 
+    error UnsupportedAssetDecimals(uint8 actualDecimals);
+    error ZeroSharesForAssets(uint256 assets);
+
     constructor(address asset_) ERC20("Yield Navigator Vault Share", "ynUSDC") ERC4626(IERC20(asset_)) {
         require(asset_ != address(0), "Invalid asset");
+
+        uint8 actualDecimals = IERC20Metadata(asset_).decimals();
+        if (actualDecimals != REQUIRED_ASSET_DECIMALS) {
+            revert UnsupportedAssetDecimals(actualDecimals);
+        }
 
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
         _grantRole(MANAGER_ROLE, msg.sender);
@@ -89,11 +101,15 @@ contract VaultV4 is ERC4626, AccessControl, Pausable, ReentrancyGuard {
             return 0;
         }
 
-        return depositCap - assets_;
+        uint256 remainingAssets = depositCap - assets_;
+        return previewDeposit(remainingAssets) == 0 ? 0 : remainingAssets;
     }
 
     function maxMint(address receiver) public view override returns (uint256) {
         uint256 maxAssets = maxDeposit(receiver);
+        if (maxAssets == 0) {
+            return 0;
+        }
         if (maxAssets == type(uint256).max) {
             return type(uint256).max;
         }
@@ -216,6 +232,18 @@ contract VaultV4 is ERC4626, AccessControl, Pausable, ReentrancyGuard {
 
     function getIdleAssets() external view returns (uint256) {
         return IERC20(asset()).balanceOf(address(this));
+    }
+
+    function _decimalsOffset() internal pure override returns (uint8) {
+        return SHARE_DECIMALS_OFFSET;
+    }
+
+    function _deposit(address caller, address receiver, uint256 assets, uint256 shares) internal override {
+        if (assets != 0 && shares == 0) {
+            revert ZeroSharesForAssets(assets);
+        }
+
+        super._deposit(caller, receiver, assets, shares);
     }
 
     function _withdraw(address caller, address receiver, address owner, uint256 assets, uint256 shares)

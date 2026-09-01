@@ -104,6 +104,15 @@ After the fail-closed deposit-cap slice:
 - Three cap properties run with 256 fuzz cases each.
 - The only failure remains the named donation/zero-share regression; offset-6 accounting is the next slice.
 
+After the offset-6 donation-safety slice:
+
+- V4 accounting suites: 50 passing, 0 failing at the normal 256 fuzz runs.
+- Full non-fork repository suite: 113 passing, 0 failing.
+- The historical 1-unit seed / 1,000-USDC donation / 100-USDC victim sequence is an exact regression.
+- No profitable single-victim donation attack was observed across 10,000 documented-domain fuzz cases in either exit order.
+- The at-least-1-USDC canary rounding bound passes 10,000 fuzzed seed/donation/deposit states.
+- Shares now use 12 decimals; frontend and indexer formatting remain deliberately blocked for their integration slices.
+
 No Stage 5 release claim is valid until the gates in [`todo.md`](./todo.md) pass.
 
 ## Development Commands

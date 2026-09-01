@@ -31,7 +31,7 @@
 
 | ID | Threat | Consequence | Required control/evidence |
 |---|---|---|---|
-| T-01 | First-depositor donation/inflation attack | Victim receives zero or unfairly few shares; attacker captures value | Explicit decimals-offset analysis, zero-share rejection, attacker-profit regression, fuzz/property tests |
+| T-01 | First-depositor donation/inflation attack | Victim receives zero or unfairly few shares; attacker captures value | Offset 6; reject zero-share deposits before transfer; exact one-share boundary tests; single-victim attacker-first and attacker-last profit fuzzing |
 | T-02 | Rounding creates value | Repeated conversions extract assets or overstate claims | Round-trip and aggregate-claims properties with boundary fuzzing |
 | T-03 | Strategy replacement while funds remain | Old strategy assets disappear from `totalAssets`; withdrawals are impaired | Replacement forbidden until old assets and tracked principal are zero; vault/asset binding checks |
 | T-04 | Strategy lies, reverts, or reports loss | Incorrect share price, denial of service, or depositor loss | Trusted strategy allowlist, loss tests, failure tests, explicit residual trust disclosure |

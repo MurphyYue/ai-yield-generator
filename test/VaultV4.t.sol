@@ -16,6 +16,7 @@ contract StrategyStub is IStrategy {
     IERC20 public immutable underlying;
     bool public failDeposit;
     bool public failWithdraw;
+    bool public failTotalAssets;
 
     constructor(address vault_, address token_) {
         vault = vault_;
@@ -33,6 +34,10 @@ contract StrategyStub is IStrategy {
 
     function setFailWithdraw(bool value) external {
         failWithdraw = value;
+    }
+
+    function setFailTotalAssets(bool value) external {
+        failTotalAssets = value;
     }
 
     function deposit(uint256 amount) external onlyVault returns (bool success) {
@@ -54,6 +59,7 @@ contract StrategyStub is IStrategy {
     }
 
     function totalAssets() external view returns (uint256) {
+        require(!failTotalAssets, "totalAssets failed");
         return underlying.balanceOf(address(this));
     }
 
@@ -86,6 +92,7 @@ contract VaultV4Test is Test {
     address public hacker;
 
     uint256 constant UNIT = 1e6;
+    uint256 constant SHARE_SCALE = 1e6;
     uint256 constant INITIAL_SUPPLY = 2_000_000 * UNIT;
     uint256 constant DEPOSIT = 100 * UNIT;
 
@@ -109,8 +116,8 @@ contract VaultV4Test is Test {
         vm.prank(treasurer);
         vault.setDepositCap(type(uint256).max);
 
-        usdc.transfer(user1, 500_000 * UNIT);
-        usdc.transfer(user2, 500_000 * UNIT);
+        assertTrue(usdc.transfer(user1, 500_000 * UNIT));
+        assertTrue(usdc.transfer(user2, 500_000 * UNIT));
 
         vm.prank(user1);
         usdc.approve(address(vault), type(uint256).max);
@@ -137,9 +144,9 @@ contract VaultV4Test is Test {
         vm.prank(user1);
         uint256 shares = vault.deposit(DEPOSIT, user1);
 
-        assertEq(shares, DEPOSIT);
-        assertEq(vault.balanceOf(user1), DEPOSIT);
-        assertEq(vault.totalSupply(), DEPOSIT);
+        assertEq(shares, DEPOSIT * SHARE_SCALE);
+        assertEq(vault.balanceOf(user1), DEPOSIT * SHARE_SCALE);
+        assertEq(vault.totalSupply(), DEPOSIT * SHARE_SCALE);
     }
 
     function testSharePriceGrowsAfterYield() public {
@@ -176,18 +183,6 @@ contract VaultV4Test is Test {
         deal(address(usdc), address(strategy), 2 * DEPOSIT + 10 * UNIT);
 
         assertApproxEqAbs(vault.previewRedeem(vault.balanceOf(user1)), vault.previewRedeem(vault.balanceOf(user2)), 1);
-    }
-
-    function testInflationAttackPrevented() public {
-        _depositFor(user1, 1);
-
-        usdc.transfer(address(vault), 1_000 * UNIT);
-
-        vm.prank(user2);
-        uint256 shares = vault.deposit(DEPOSIT, user2);
-
-        assertGt(shares, 0);
-        assertGt(vault.previewRedeem(vault.balanceOf(user2)), 0);
     }
 
     function testWithdrawRevertsIfIdleLiquidityInsufficient() public {
@@ -348,7 +343,7 @@ contract VaultV4Test is Test {
 
         uint256 transferShares = vault.balanceOf(user1) / 10;
         vm.prank(user1);
-        vault.transfer(user2, transferShares);
+        assertTrue(vault.transfer(user2, transferShares));
         _investAsOperator(50 * UNIT);
         _divestAsOperator(50 * UNIT, 50 * UNIT);
 
@@ -404,7 +399,7 @@ contract VaultV4Test is Test {
     function testFiniteCapIncludesIdleStrategyAssetsAndDonations() public {
         _depositFor(user1, DEPOSIT);
         _investAsOperator(40 * UNIT);
-        usdc.transfer(address(vault), 10 * UNIT);
+        assertTrue(usdc.transfer(address(vault), 10 * UNIT));
 
         vm.prank(treasurer);
         vault.setDepositCap(300 * UNIT);
@@ -476,7 +471,7 @@ contract VaultV4Test is Test {
 
         vm.prank(treasurer);
         vault.setDepositCap(105 * UNIT);
-        usdc.transfer(address(vault), 10 * UNIT);
+        assertTrue(usdc.transfer(address(vault), 10 * UNIT));
 
         assertEq(vault.totalAssets(), 110 * UNIT);
         assertEq(vault.maxDeposit(user2), 0);
@@ -513,6 +508,23 @@ contract VaultV4Test is Test {
         assertEq(vault.maxMint(user1), 0);
     }
 
+    function testClosedAndPausedMaxMintDoNotReadRevertingStrategy() public {
+        vm.prank(treasurer);
+        vault.setDepositCap(0);
+        strategy.setFailTotalAssets(true);
+
+        assertEq(vault.maxDeposit(user1), 0);
+        assertEq(vault.maxMint(user1), 0);
+
+        vm.prank(treasurer);
+        vault.setDepositCap(type(uint256).max);
+        vm.prank(manager);
+        vault.pause();
+
+        assertEq(vault.maxDeposit(user1), 0);
+        assertEq(vault.maxMint(user1), 0);
+    }
+
     function testPreviewsRemainConversionQuotesWhenCapIsClosed() public {
         vm.prank(treasurer);
         vault.setDepositCap(0);
@@ -534,7 +546,7 @@ contract VaultV4Test is Test {
 
         _depositFor(user1, initialAssets);
         if (donationAssets > 0) {
-            usdc.transfer(address(vault), donationAssets);
+            assertTrue(usdc.transfer(address(vault), donationAssets));
         }
 
         vm.prank(treasurer);
@@ -602,11 +614,12 @@ contract VaultV4Test is Test {
     function testShareTransferAllowedWhileActive() public {
         _depositFor(user1, DEPOSIT);
 
+        uint256 transferShares = vault.balanceOf(user1) / 4;
         vm.prank(user1);
-        vault.transfer(user2, 25 * UNIT);
+        assertTrue(vault.transfer(user2, transferShares));
 
-        assertEq(vault.balanceOf(user1), 75 * UNIT);
-        assertEq(vault.balanceOf(user2), 25 * UNIT);
+        assertEq(vault.balanceOf(user1), 3 * transferShares);
+        assertEq(vault.balanceOf(user2), transferShares);
     }
 
     function testShareTransferRevertsWhilePaused() public {
@@ -615,8 +628,9 @@ contract VaultV4Test is Test {
         vm.prank(manager);
         vault.pause();
 
+        uint256 transferShares = vault.balanceOf(user1) / 4;
         vm.prank(user1);
         vm.expectRevert("Vault is paused");
-        vault.transfer(user2, 25 * UNIT);
+        vault.transfer(user2, transferShares);
     }
 }

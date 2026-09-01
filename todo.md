@@ -68,11 +68,11 @@ Stage 5 keeps:
 
 ### Accounting and donation safety
 
-- [ ] Define the supported minimum deposit and maximum acceptable rounding loss.
-- [ ] Implement and prove the confirmed offset of `6` (6-decimal USDC, 12-decimal vault shares).
-- [ ] Reject every successful nonzero deposit or mint that would produce zero assets/shares.
-- [ ] Add a regression proving the historical donation exploit.
-- [ ] Prove donation attacker profit is non-positive over fuzzed attacker/victim inputs.
+- [x] Define the 1-USDC Console minimum and the scoped 49-raw-unit canary rounding-loss bound.
+- [x] Implement and prove offset `6` (6-decimal USDC, 12-decimal vault shares).
+- [x] Reject every successful nonzero deposit or mint that would produce zero assets/shares.
+- [x] Add exact regressions for the historical donation exploit and zero-share boundaries.
+- [x] Record no positive attacker return in both exit orders over 10,000 single-victim fuzz cases in the documented domain.
 - [ ] Prove asset-share round trips never create value.
 - [ ] Prove aggregate redeemable claims do not exceed `totalAssets()` beyond documented rounding.
 
@@ -88,10 +88,10 @@ Stage 5 keeps:
 
 ### ERC-4626 and operational consistency
 
-- [ ] Make `maxDeposit` and `maxMint` agree with cap and pause state.
+- [x] Make `maxDeposit` and `maxMint` agree with cap, pause, and zero-share acceptance state.
 - [ ] Make `maxWithdraw` and `maxRedeem` agree with idle liquidity and pause state.
 - [ ] Verify preview and actual operations agree when state is unchanged.
-- [ ] Fix the slippage regression so it reaches the operator-only divest path.
+- [x] Fix the slippage regression so it reaches the operator-only divest path.
 - [ ] Define and test paused-state deposit, mint, withdraw, redeem, invest, divest, share-transfer, and emergency behavior.
 - [ ] Remove fee, large-withdrawal, and blacklist ABI/events from contract, frontend, indexer, and docs.
 
