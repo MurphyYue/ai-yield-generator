@@ -38,7 +38,7 @@
 | T-05 | Invalid Aave pool/aToken configuration | Funds sent to unusable integration or yield omitted | Constructor/config validation against nonzero code and resolved aToken; pinned fork tests |
 | T-06 | Slippage on divest | Vault receives less USDC than operator expects | Measure actual balance delta and enforce explicit `minAmountOut` |
 | T-07 | Insufficient idle withdrawal liquidity | Preview/UI promises an unexecutable withdrawal | Idle-limited `maxWithdraw`/`maxRedeem`; UI separates redeemable from currently withdrawable assets |
-| T-08 | Donation consumes deposit cap | Denial of new deposits | Document cap semantics; test direct-donation effect; conservative operational response |
+| T-08 | Donation or yield consumes deposit-cap headroom or pushes AUM above cap | Denial of new deposits; operators misread above-cap AUM as an accounting failure | Treat cap as a controlled-inflow limit over `totalAssets`; test donation/yield effects; show closed/exhausted state; never exclude donated assets from ownership accounting |
 | T-09 | Role compromise or accidental grant | Unauthorized pause, allocation, or reconfiguration | Separation of duties, exact role tests, deployment assertions, event monitoring, disclosed canary key model |
 | T-10 | Reentrancy or unsafe external-call ordering | Duplicate state transition or fund loss | `nonReentrant`, checks/effects/interactions review, malicious strategy/token tests where meaningful |
 | T-11 | Pause policy inconsistency | Emergency controls fail or unnecessarily trap operations | One function-by-function paused-state matrix with regression tests |

@@ -97,6 +97,13 @@ After the contract-only Lean V4 policy-removal slice on `fix/v4-accounting`:
 - The donation/zero-share defect remains deliberately failing until its accounting policy is implemented.
 - Frontend and indexer integration still use legacy V3/policy surfaces, so this branch is not deployable.
 
+After the fail-closed deposit-cap slice:
+
+- V4 suite: 34 passing, 1 failing.
+- Full non-fork suite: 97 passing, 1 failing.
+- Three cap properties run with 256 fuzz cases each.
+- The only failure remains the named donation/zero-share regression; offset-6 accounting is the next slice.
+
 No Stage 5 release claim is valid until the gates in [`todo.md`](./todo.md) pass.
 
 ## Development Commands

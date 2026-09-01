@@ -47,6 +47,7 @@ Stage 5 keeps:
 - `MANAGER_ROLE` for pause and unpause.
 - `OPERATOR_ROLE` for invest and divest.
 - `TREASURER_ROLE` for the canary deposit cap.
+- A cap of `0` closes deposits/mints; max uint is explicit test/local unlimited; finite caps use raw USDC units and `totalAssets()` headroom.
 - Explicit idle-liquidity withdrawal semantics.
 - Emergency strategy recovery.
 
@@ -68,7 +69,7 @@ Stage 5 keeps:
 ### Accounting and donation safety
 
 - [ ] Define the supported minimum deposit and maximum acceptable rounding loss.
-- [ ] Choose `_decimalsOffset()` from an explicit USDC attack/economic test matrix.
+- [ ] Implement and prove the confirmed offset of `6` (6-decimal USDC, 12-decimal vault shares).
 - [ ] Reject every successful nonzero deposit or mint that would produce zero assets/shares.
 - [ ] Add a regression proving the historical donation exploit.
 - [ ] Prove donation attacker profit is non-positive over fuzzed attacker/victim inputs.
@@ -128,6 +129,8 @@ Stage 5 keeps:
 
 - [ ] Show total, idle, and Aave-deployed USDC.
 - [ ] Show share price, cap, pause status, verified addresses, and data block.
+- [ ] Format USDC/cap values with 6 decimals and vault-share values with 12 decimals from validated metadata.
+- [ ] Render cap `0` as deposits closed and max uint as explicit unlimited; never label zero unlimited.
 - [ ] Show explicit unaudited-canary and additional-trust disclosures.
 
 ### Depositor view

@@ -2,6 +2,7 @@
 pragma solidity ^0.8.24;
 
 import "forge-std/Test.sol";
+import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
 import {ERC4626} from "@openzeppelin/contracts/token/ERC20/extensions/ERC4626.sol";
 import "@openzeppelin/contracts/utils/Pausable.sol";
 import "../contracts/VaultV4.sol";
@@ -71,6 +72,8 @@ contract StrategyStub is IStrategy {
 }
 
 contract VaultV4Test is Test {
+    event DepositCapUpdated(uint256 oldCap, uint256 newCap);
+
     VaultV4 public vault;
     MockERC20 public usdc;
     StrategyStub public strategy;
@@ -102,6 +105,9 @@ contract VaultV4Test is Test {
         vault.grantOperatorRole(operator);
         vault.grantTreasurerRole(treasurer);
         vault.setStrategy(address(strategy));
+
+        vm.prank(treasurer);
+        vault.setDepositCap(type(uint256).max);
 
         usdc.transfer(user1, 500_000 * UNIT);
         usdc.transfer(user2, 500_000 * UNIT);
@@ -266,7 +272,7 @@ contract VaultV4Test is Test {
         vault.setDepositCap(50 * UNIT);
 
         vm.prank(user1);
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(ERC4626.ERC4626ExceededMaxDeposit.selector, user1, DEPOSIT, 50 * UNIT));
         vault.deposit(DEPOSIT, user1);
     }
 
@@ -276,6 +282,304 @@ contract VaultV4Test is Test {
 
         _depositFor(user1, DEPOSIT);
         assertEq(vault.maxDeposit(user2), 50 * UNIT);
+    }
+
+    function testDefaultZeroCapClosesPositiveDepositAndMint() public {
+        VaultV4 closedVault = new VaultV4(address(usdc));
+        uint256 userBalanceBefore = usdc.balanceOf(user1);
+
+        vm.prank(user1);
+        usdc.approve(address(closedVault), type(uint256).max);
+
+        assertEq(closedVault.depositCap(), 0);
+        assertEq(closedVault.maxDeposit(user1), 0);
+        assertEq(closedVault.maxMint(user1), 0);
+
+        vm.prank(user1);
+        vm.expectRevert(abi.encodeWithSelector(ERC4626.ERC4626ExceededMaxDeposit.selector, user1, 1, 0));
+        closedVault.deposit(1, user1);
+
+        vm.prank(user1);
+        vm.expectRevert(abi.encodeWithSelector(ERC4626.ERC4626ExceededMaxMint.selector, user1, 1, 0));
+        closedVault.mint(1, user1);
+
+        assertEq(usdc.balanceOf(user1), userBalanceBefore);
+        assertEq(closedVault.totalAssets(), 0);
+        assertEq(closedVault.totalSupply(), 0);
+    }
+
+    function testDefaultZeroCapAllowsZeroNoOps() public {
+        VaultV4 closedVault = new VaultV4(address(usdc));
+
+        vm.prank(user1);
+        assertEq(closedVault.deposit(0, user1), 0);
+
+        vm.prank(user1);
+        assertEq(closedVault.mint(0, user1), 0);
+
+        assertEq(closedVault.totalAssets(), 0);
+        assertEq(closedVault.totalSupply(), 0);
+    }
+
+    function testZeroCapStillAllowsHolderExit() public {
+        _depositFor(user1, DEPOSIT);
+
+        vm.prank(treasurer);
+        vault.setDepositCap(0);
+
+        assertEq(vault.maxDeposit(user2), 0);
+        assertEq(vault.maxMint(user2), 0);
+        assertGt(vault.maxWithdraw(user1), 0);
+        assertGt(vault.maxRedeem(user1), 0);
+
+        uint256 userShares = vault.balanceOf(user1);
+        vm.prank(user1);
+        uint256 assets = vault.redeem(userShares, user1, user1);
+
+        assertEq(assets, DEPOSIT);
+        assertEq(vault.balanceOf(user1), 0);
+    }
+
+    function testZeroCapDoesNotPauseTransfersInvestOrDivest() public {
+        _depositFor(user1, DEPOSIT);
+
+        vm.prank(treasurer);
+        vault.setDepositCap(0);
+
+        uint256 transferShares = vault.balanceOf(user1) / 10;
+        vm.prank(user1);
+        vault.transfer(user2, transferShares);
+        _investAsOperator(50 * UNIT);
+        _divestAsOperator(50 * UNIT, 50 * UNIT);
+
+        assertEq(vault.balanceOf(user2), transferShares);
+        assertEq(vault.getStrategyBalance(), 0);
+        assertEq(vault.getIdleAssets(), DEPOSIT);
+    }
+
+    function testTreasurerCanCloseAndReopenCap() public {
+        _depositFor(user1, DEPOSIT);
+
+        vm.startPrank(treasurer);
+        vault.setDepositCap(0);
+        assertEq(vault.maxDeposit(user2), 0);
+        vault.setDepositCap(150 * UNIT);
+        vm.stopPrank();
+
+        assertEq(vault.maxDeposit(user2), 50 * UNIT);
+    }
+
+    function testSetDepositCapTreasurerOnly() public {
+        bytes32 treasurerRole = vault.TREASURER_ROLE();
+        vm.prank(hacker);
+        vm.expectRevert(
+            abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, hacker, treasurerRole)
+        );
+        vault.setDepositCap(50 * UNIT);
+    }
+
+    function testDepositCapUpdateEmitsOldAndNewValues() public {
+        vm.startPrank(treasurer);
+
+        vm.expectEmit(false, false, false, true, address(vault));
+        emit DepositCapUpdated(type(uint256).max, 0);
+        vault.setDepositCap(0);
+
+        vm.expectEmit(false, false, false, true, address(vault));
+        emit DepositCapUpdated(0, 50 * UNIT);
+        vault.setDepositCap(50 * UNIT);
+
+        vm.stopPrank();
+    }
+
+    function testMaxUintCapIsExplicitUnlimitedSentinel() public {
+        assertEq(vault.depositCap(), type(uint256).max);
+        assertEq(vault.maxDeposit(user1), type(uint256).max);
+        assertEq(vault.maxMint(user1), type(uint256).max);
+
+        _depositFor(user1, DEPOSIT);
+        assertEq(vault.totalAssets(), DEPOSIT);
+    }
+
+    function testFiniteCapIncludesIdleStrategyAssetsAndDonations() public {
+        _depositFor(user1, DEPOSIT);
+        _investAsOperator(40 * UNIT);
+        usdc.transfer(address(vault), 10 * UNIT);
+
+        vm.prank(treasurer);
+        vault.setDepositCap(300 * UNIT);
+
+        assertEq(vault.totalAssets(), 110 * UNIT);
+        assertEq(vault.maxDeposit(user2), 190 * UNIT);
+    }
+
+    function testExactMaxDepositSucceedsAndOneAboveReverts() public {
+        _depositFor(user1, DEPOSIT);
+
+        vm.prank(treasurer);
+        vault.setDepositCap(150 * UNIT);
+
+        uint256 maxAssets = vault.maxDeposit(user2);
+        assertEq(maxAssets, 50 * UNIT);
+
+        vm.prank(user2);
+        vm.expectRevert(
+            abi.encodeWithSelector(ERC4626.ERC4626ExceededMaxDeposit.selector, user2, maxAssets + 1, maxAssets)
+        );
+        vault.deposit(maxAssets + 1, user2);
+
+        vm.prank(user2);
+        vault.deposit(maxAssets, user2);
+        assertEq(vault.totalAssets(), 150 * UNIT);
+    }
+
+    function testMaxMintIsTightAtFiniteCap() public {
+        _depositFor(user1, DEPOSIT);
+
+        vm.prank(treasurer);
+        vault.setDepositCap(150 * UNIT);
+
+        uint256 remainingAssets = vault.maxDeposit(user2);
+        uint256 maxShares = vault.maxMint(user2);
+        assertLe(vault.previewMint(maxShares), remainingAssets);
+        assertGt(vault.previewMint(maxShares + 1), remainingAssets);
+
+        vm.prank(user2);
+        vm.expectRevert(
+            abi.encodeWithSelector(ERC4626.ERC4626ExceededMaxMint.selector, user2, maxShares + 1, maxShares)
+        );
+        vault.mint(maxShares + 1, user2);
+
+        vm.prank(user2);
+        vault.mint(maxShares, user2);
+        assertLe(vault.totalAssets(), 150 * UNIT);
+    }
+
+    function testCapAtOrBelowTotalAssetsClosesInflows() public {
+        _depositFor(user1, DEPOSIT);
+
+        vm.startPrank(treasurer);
+        vault.setDepositCap(DEPOSIT);
+        assertEq(vault.maxDeposit(user2), 0);
+        assertEq(vault.maxMint(user2), 0);
+
+        vault.setDepositCap(DEPOSIT - 1);
+        vm.stopPrank();
+
+        assertEq(vault.maxDeposit(user2), 0);
+        assertEq(vault.maxMint(user2), 0);
+        assertGt(vault.maxWithdraw(user1), 0);
+    }
+
+    function testDonationAboveCapClosesInflowsButPreservesExit() public {
+        _depositFor(user1, DEPOSIT);
+
+        vm.prank(treasurer);
+        vault.setDepositCap(105 * UNIT);
+        usdc.transfer(address(vault), 10 * UNIT);
+
+        assertEq(vault.totalAssets(), 110 * UNIT);
+        assertEq(vault.maxDeposit(user2), 0);
+        assertEq(vault.maxMint(user2), 0);
+
+        vm.prank(user1);
+        vault.withdraw(50 * UNIT, user1, user1);
+        assertEq(usdc.balanceOf(user1), 500_000 * UNIT - 50 * UNIT);
+    }
+
+    function testPauseOverridesFiniteAndUnlimitedCap() public {
+        assertEq(vault.maxDeposit(user1), type(uint256).max);
+
+        vm.prank(manager);
+        vault.pause();
+        assertEq(vault.maxDeposit(user1), 0);
+        assertEq(vault.maxMint(user1), 0);
+
+        vm.prank(user1);
+        vm.expectRevert(Pausable.EnforcedPause.selector);
+        vault.deposit(1, user1);
+
+        vm.prank(manager);
+        vault.unpause();
+        assertEq(vault.maxDeposit(user1), type(uint256).max);
+
+        vm.prank(treasurer);
+        vault.setDepositCap(50 * UNIT);
+        assertEq(vault.maxDeposit(user1), 50 * UNIT);
+
+        vm.prank(manager);
+        vault.pause();
+        assertEq(vault.maxDeposit(user1), 0);
+        assertEq(vault.maxMint(user1), 0);
+    }
+
+    function testPreviewsRemainConversionQuotesWhenCapIsClosed() public {
+        vm.prank(treasurer);
+        vault.setDepositCap(0);
+
+        assertEq(vault.maxDeposit(user1), 0);
+        assertEq(vault.maxMint(user1), 0);
+        assertGt(vault.previewDeposit(DEPOSIT), 0);
+        assertGt(vault.previewMint(DEPOSIT), 0);
+    }
+
+    function testFuzzFiniteCapReportsRemainingAumCapacity(uint96 initialSeed, uint96 donationSeed, uint96 capSeed)
+        public
+    {
+        // Keep this cap property in an ordinary depositor state. Adversarial
+        // first-depositor/donation ratios belong to the inflation suite.
+        uint256 initialAssets = bound(uint256(initialSeed), UNIT, 100_000 * UNIT);
+        uint256 donationAssets = bound(uint256(donationSeed), 0, initialAssets);
+        uint256 finiteCap = bound(uint256(capSeed), 1, 250_000 * UNIT);
+
+        _depositFor(user1, initialAssets);
+        if (donationAssets > 0) {
+            usdc.transfer(address(vault), donationAssets);
+        }
+
+        vm.prank(treasurer);
+        vault.setDepositCap(finiteCap);
+
+        uint256 managedAssets = vault.totalAssets();
+        uint256 expectedRemaining = managedAssets >= finiteCap ? 0 : finiteCap - managedAssets;
+        assertEq(vault.maxDeposit(user2), expectedRemaining);
+    }
+
+    function testFuzzSuccessfulDepositNeverCrossesFiniteCap(uint96 initialSeed, uint96 headroomSeed, uint96 depositSeed)
+        public
+    {
+        uint256 initialAssets = bound(uint256(initialSeed), 1, 100_000 * UNIT);
+        uint256 headroom = bound(uint256(headroomSeed), 1, 100_000 * UNIT);
+        uint256 depositAssets = bound(uint256(depositSeed), 1, headroom);
+        uint256 finiteCap = initialAssets + headroom;
+
+        _depositFor(user1, initialAssets);
+        vm.prank(treasurer);
+        vault.setDepositCap(finiteCap);
+
+        _depositFor(user2, depositAssets);
+        assertLe(vault.totalAssets(), finiteCap);
+    }
+
+    function testFuzzZeroCapRejectsPositiveDepositAndMint(uint96 assetsSeed, uint96 sharesSeed) public {
+        uint256 assets = bound(uint256(assetsSeed), 1, 100_000 * UNIT);
+        uint256 shares = bound(uint256(sharesSeed), 1, 100_000 * UNIT);
+        uint256 userBalanceBefore = usdc.balanceOf(user1);
+
+        vm.prank(treasurer);
+        vault.setDepositCap(0);
+
+        vm.prank(user1);
+        vm.expectRevert(abi.encodeWithSelector(ERC4626.ERC4626ExceededMaxDeposit.selector, user1, assets, 0));
+        vault.deposit(assets, user1);
+
+        vm.prank(user1);
+        vm.expectRevert(abi.encodeWithSelector(ERC4626.ERC4626ExceededMaxMint.selector, user1, shares, 0));
+        vault.mint(shares, user1);
+
+        assertEq(usdc.balanceOf(user1), userBalanceBefore);
+        assertEq(vault.totalAssets(), 0);
+        assertEq(vault.totalSupply(), 0);
     }
 
     function testDivestWithYieldDoesNotMintShares() public {

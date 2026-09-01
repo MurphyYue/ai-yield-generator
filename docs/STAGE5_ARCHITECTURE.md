@@ -78,13 +78,17 @@ This limitation is part of the product UI and trust model, not an implementation
 
 Stage 5 removes performance fees, large-withdrawal approval, and blacklist restrictions.
 
+The deposit cap is an assets-under-management limit denominated in raw USDC units. A cap of `0` closes deposits and mints while preserving exits, share transfers, and operator liquidity management. `type(uint256).max` is the only explicit unlimited sentinel and is reserved for tests or local development. The live canary target is `50e6` raw units (50 USDC).
+
+Finite capacity is calculated from `totalAssets()`, so Aave yield and unsolicited donations consume headroom. They can also push AUM above the configured cap; the cap constrains accepted ERC-4626 inflows rather than placing an absolute ceiling on assets.
+
 ### Why performance fees are deferred
 
 ERC-4626 standardizes ownership accounting but does not standardize realized performance-fee accounting. Correct fee-share dilution requires a separate economic specification and property suite. Monetization does not justify that extra risk for an unaudited low-value canary.
 
 ### Why large-withdrawal approval is removed
 
-A treasurer approval can make `maxWithdraw` or `maxRedeem` advertise an amount that still reverts, and share-price movement complicates pre-approval of an exact redemption. A conservative vault cap already bounds the canary exposure.
+A treasurer approval can make `maxWithdraw` or `maxRedeem` advertise an amount that still reverts, and share-price movement complicates pre-approval of an exact redemption. A conservative vault cap bounds accepted user inflows without adding a second withdrawal authorization path.
 
 ### Why blacklist restrictions are removed
 

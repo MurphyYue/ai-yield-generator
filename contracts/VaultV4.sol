@@ -15,6 +15,9 @@ contract VaultV4 is ERC4626, AccessControl, Pausable, ReentrancyGuard {
     bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
     bytes32 public constant TREASURER_ROLE = keccak256("TREASURER_ROLE");
 
+    /// @notice Maximum managed assets, denominated in raw underlying-asset units.
+    /// @dev Zero closes deposits/mints. Max uint is the explicit unlimited sentinel.
+    ///      Yield and unsolicited donations may increase totalAssets above a finite cap.
     uint256 public depositCap;
     uint256 public strategyPrincipal;
 
@@ -71,8 +74,14 @@ contract VaultV4 is ERC4626, AccessControl, Pausable, ReentrancyGuard {
             return 0;
         }
 
-        if (depositCap == 0) {
+        // Test/local fixtures may opt into unlimited inflows explicitly. A fresh
+        // deployment stays fail-closed because storage defaults to zero.
+        if (depositCap == type(uint256).max) {
             return type(uint256).max;
+        }
+
+        if (depositCap == 0) {
+            return 0;
         }
 
         uint256 assets_ = totalAssets();
