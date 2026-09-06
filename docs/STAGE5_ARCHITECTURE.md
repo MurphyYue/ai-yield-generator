@@ -87,6 +87,16 @@ Stage 5 does not impose a fixed on-chain minimum because a fixed asset amount ca
 
 The attacker-profit fuzz domain is deliberately narrower than a general economic proof: one attacker seeds `1` raw unit through 10,000 USDC, makes one direct donation from `1` raw unit through 100,000 USDC, and is followed by one victim depositing `1` raw unit through 100,000 USDC. Across 10,000 generated cases, no positive attacker return was observed when the attacker redeemed either before or after the victim. Multi-victim, partial, interleaved, and MEV sequences still require the later stateful invariant work.
 
+### Why conversions and aggregate claims cannot create assets
+
+Let `A` be `totalAssets()`, `S` be `totalSupply()`, `M = 1e6` be the virtual-share term, `Y = A + 1`, and `P = S + M`. At unchanged state, OpenZeppelin's down-rounded conversions give `q = floor(aP / Y)` shares for `a` assets and `r = floor(sY / P)` assets for `s` shares. Therefore `floor(qY / P) <= a` and `floor(rP / Y) <= s`: an asset-share-asset or share-asset-share view round trip cannot increase the starting amount.
+
+The same bound survives an immediate state-changing round trip. A deposit mints `q = floor(aP / Y)` and changes the terms to `P + q` and `Y + a`; redeeming those shares cannot return more than `a` because `qY <= aP`. A mint charges `a = ceil(qY / P)`, so the same inequality holds. These are arithmetic results for an unchanged external environment; yield, loss, donations, or intervening users are separate state changes.
+
+For an exhaustive set of `n` holder balances `s_i` whose sum is `S`, `sum(floor(s_i Y / P)) <= floor(SY / P)`. The partition-rounding gap between those two values is at most `n - 1` raw asset units, so the four-holder implementation test allows at most 3 raw units of aggregate underclaim and no overclaim. Because `P = S + M` and `M > 0`, `SY / P < Y = A + 1`, so the whole-supply claim and the sum of individual claims are both at most `A`. The separate gap between `A` and the whole-supply claim can be larger because of the virtual terms. Neither gap permits an overclaim. This is a solvency statement, not a liquidity promise: `maxWithdraw` and `maxRedeem` can be lower while assets remain invested.
+
+The implementation exercises all five properties over 10,000 generated cases each, including seeded and donated exchange rates, actual deposit/mint followed by redeem, four exhaustive holders, share transfer, donation, and simulated loss. The derivation establishes the rounding direction; fuzzing checks that the deployed code paths implement it over the recorded domains.
+
 Direct ERC-4626 `deposit` has no `minShares` argument. A transaction can therefore face exchange-rate movement between simulation and mining even though zero-share deposits are rejected. An atomic slippage router or `depositWithMinShares` is deferred and remains a disclosed production limitation.
 
 ## Lean V4 Policy

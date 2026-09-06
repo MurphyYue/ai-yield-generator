@@ -73,8 +73,8 @@ Stage 5 keeps:
 - [x] Reject every successful nonzero deposit or mint that would produce zero assets/shares.
 - [x] Add exact regressions for the historical donation exploit and zero-share boundaries.
 - [x] Record no positive attacker return in both exit orders over 10,000 single-victim fuzz cases in the documented domain.
-- [ ] Prove asset-share round trips never create value.
-- [ ] Prove aggregate redeemable claims do not exceed `totalAssets()` beyond documented rounding.
+- [x] Derive and test that fixed-state conversions and immediate deposit/mint-to-redeem round trips never create value.
+- [x] Derive and test that exhaustive holder claims do not exceed the whole-supply claim or `totalAssets()`.
 
 ### Strategy lifecycle
 

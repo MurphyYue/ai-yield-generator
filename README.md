@@ -113,6 +113,14 @@ After the offset-6 donation-safety slice:
 - The at-least-1-USDC canary rounding bound passes 10,000 fuzzed seed/donation/deposit states.
 - Shares now use 12 decimals; frontend and indexer formatting remain deliberately blocked for their integration slices.
 
+After the round-trip and aggregate-claims accounting slice:
+
+- V4 accounting suites: 56 passing, 0 failing at the normal 256 fuzz runs.
+- Full non-fork repository suite: 119 passing, 0 failing.
+- Exact rounding inequalities cover view conversions, immediate deposit/mint-to-redeem cycles, and exhaustive aggregate holder claims.
+- Five implementation properties pass 10,000 generated cases each across seeded/donated rates, transfers, and simulated loss.
+- These checks establish ownership-accounting bounds; they do not claim that invested assets are immediately withdrawable.
+
 No Stage 5 release claim is valid until the gates in [`todo.md`](./todo.md) pass.
 
 ## Development Commands
