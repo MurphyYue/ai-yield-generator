@@ -121,6 +121,14 @@ After the round-trip and aggregate-claims accounting slice:
 - Five implementation properties pass 10,000 generated cases each across seeded/donated rates, transfers, and simulated loss.
 - These checks establish ownership-accounting bounds; they do not claim that invested assets are immediately withdrawable.
 
+After the withdrawal-limit consistency slice:
+
+- V4 accounting suites: 61 passing, 0 failing at the normal 256 fuzz runs.
+- Full non-fork repository suite: 124 passing, 0 failing.
+- Under stable accounting reads, `maxRedeem` now reports the exact positive-idle share boundary instead of underestimating it with a down-rounded asset-to-share conversion.
+- The withdrawal-limit boundary passes 10,000 generated deposit, allocation, yield, and loss states.
+- Pause and zero idle liquidity fail closed; user funds are not advertised as immediately redeemable while they remain invested.
+
 No Stage 5 release claim is valid until the gates in [`todo.md`](./todo.md) pass.
 
 ## Development Commands

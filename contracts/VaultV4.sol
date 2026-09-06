@@ -121,8 +121,17 @@ contract VaultV4 is ERC4626, AccessControl, Pausable, ReentrancyGuard {
             return 0;
         }
 
-        uint256 ownerAssets = previewRedeem(balanceOf(owner));
+        uint256 ownerShares = balanceOf(owner);
+        if (ownerShares == 0) {
+            return 0;
+        }
+
         uint256 idleAssets = IERC20(asset()).balanceOf(address(this));
+        if (idleAssets == 0) {
+            return 0;
+        }
+
+        uint256 ownerAssets = previewRedeem(ownerShares);
         return ownerAssets < idleAssets ? ownerAssets : idleAssets;
     }
 
@@ -131,10 +140,24 @@ contract VaultV4 is ERC4626, AccessControl, Pausable, ReentrancyGuard {
             return 0;
         }
 
-        uint256 idleAssets = IERC20(asset()).balanceOf(address(this));
-        uint256 liquidityLimitedShares = convertToShares(idleAssets);
         uint256 ownerShares = balanceOf(owner);
-        return ownerShares < liquidityLimitedShares ? ownerShares : liquidityLimitedShares;
+        if (ownerShares == 0) {
+            return 0;
+        }
+
+        uint256 idleAssets = IERC20(asset()).balanceOf(address(this));
+        if (idleAssets == 0) {
+            return 0;
+        }
+
+        if (previewRedeem(ownerShares) <= idleAssets) {
+            return ownerShares;
+        }
+
+        // `convertToShares(idleAssets)` rounds down and can understate the
+        // largest redeemable share amount. This is the exact inverse boundary
+        // for floor-rounded `previewRedeem`: max s where previewRedeem(s) <= idle.
+        return previewWithdraw(idleAssets + 1) - 1;
     }
 
     function deposit(uint256 assets, address receiver) public override nonReentrant whenNotPaused returns (uint256) {

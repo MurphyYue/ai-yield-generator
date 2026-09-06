@@ -89,7 +89,7 @@ Stage 5 keeps:
 ### ERC-4626 and operational consistency
 
 - [x] Make `maxDeposit` and `maxMint` agree with cap, pause, and zero-share acceptance state.
-- [ ] Make `maxWithdraw` and `maxRedeem` agree with idle liquidity and pause state.
+- [x] Make `maxWithdraw` and `maxRedeem` agree exactly with the declared idle-liquidity and pause policy.
 - [ ] Verify preview and actual operations agree when state is unchanged.
 - [x] Fix the slippage regression so it reaches the operator-only divest path.
 - [ ] Define and test paused-state deposit, mint, withdraw, redeem, invest, divest, share-transfer, and emergency behavior.

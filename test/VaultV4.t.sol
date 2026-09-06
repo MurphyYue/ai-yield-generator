@@ -194,6 +194,140 @@ contract VaultV4Test is Test {
         vault.withdraw(1, user1, user1);
     }
 
+    function testMaxRedeemAllowsFullExitWhenAllAssetsAreIdleAfterLoss() public {
+        _depositFor(user1, DEPOSIT);
+        uint256 userShares = vault.balanceOf(user1);
+
+        deal(address(usdc), address(vault), 1);
+
+        assertEq(vault.previewRedeem(userShares), 1);
+        assertEq(vault.maxWithdraw(user1), 1);
+        assertEq(vault.maxRedeem(user1), userShares);
+
+        vm.prank(user1);
+        assertEq(vault.redeem(userShares, user1, user1), 1);
+        assertEq(vault.balanceOf(user1), 0);
+    }
+
+    function testMaxRedeemIsTightAtPartialIdleLiquidity() public {
+        _depositFor(user1, DEPOSIT);
+        _investAsOperator(90 * UNIT);
+
+        uint256 idleAssets = vault.getIdleAssets();
+        uint256 userShares = vault.balanceOf(user1);
+        uint256 maxShares = vault.maxRedeem(user1);
+
+        assertEq(idleAssets, 10 * UNIT);
+        assertEq(vault.maxWithdraw(user1), idleAssets);
+        assertEq(maxShares, vault.previewWithdraw(idleAssets + 1) - 1);
+        assertLt(maxShares, userShares);
+        assertGt(maxShares, vault.convertToShares(idleAssets));
+        assertLe(vault.previewRedeem(maxShares), idleAssets);
+        assertGt(vault.previewRedeem(maxShares + 1), idleAssets);
+
+        uint256 expectedSharesBurned = vault.previewWithdraw(idleAssets);
+        uint256 operationSnapshot = vm.snapshotState();
+        vm.prank(user1);
+        assertEq(vault.withdraw(idleAssets, user1, user1), expectedSharesBurned);
+        assertTrue(vm.revertToState(operationSnapshot));
+
+        vm.prank(user1);
+        vm.expectRevert(
+            abi.encodeWithSelector(ERC4626.ERC4626ExceededMaxWithdraw.selector, user1, idleAssets + 1, idleAssets)
+        );
+        vault.withdraw(idleAssets + 1, user1, user1);
+
+        vm.prank(user1);
+        vm.expectRevert(
+            abi.encodeWithSelector(ERC4626.ERC4626ExceededMaxRedeem.selector, user1, maxShares + 1, maxShares)
+        );
+        vault.redeem(maxShares + 1, user1, user1);
+
+        vm.prank(user1);
+        uint256 assetsOut = vault.redeem(maxShares, user1, user1);
+        assertLe(assetsOut, idleAssets);
+    }
+
+    function testZeroIdleLiquidityClosesWithdrawAndRedeemWithoutReadingStrategy() public {
+        _depositFor(user1, DEPOSIT);
+        _investAsOperator(DEPOSIT);
+        strategy.setFailTotalAssets(true);
+
+        assertEq(vault.maxWithdraw(user1), 0);
+        assertEq(vault.maxRedeem(user1), 0);
+
+        vm.prank(user1);
+        vm.expectRevert(abi.encodeWithSelector(ERC4626.ERC4626ExceededMaxWithdraw.selector, user1, 1, 0));
+        vault.withdraw(1, user1, user1);
+
+        vm.prank(user1);
+        vm.expectRevert(abi.encodeWithSelector(ERC4626.ERC4626ExceededMaxRedeem.selector, user1, 1, 0));
+        vault.redeem(1, user1, user1);
+    }
+
+    function testPauseClosesWithdrawAndRedeem() public {
+        _depositFor(user1, DEPOSIT);
+        uint256 userShares = vault.balanceOf(user1);
+
+        vm.prank(manager);
+        vault.pause();
+
+        assertEq(vault.maxWithdraw(user1), 0);
+        assertEq(vault.maxRedeem(user1), 0);
+
+        vm.prank(user1);
+        vm.expectRevert(Pausable.EnforcedPause.selector);
+        vault.withdraw(1, user1, user1);
+
+        vm.prank(user1);
+        vm.expectRevert(Pausable.EnforcedPause.selector);
+        vault.redeem(userShares, user1, user1);
+    }
+
+    function testFuzzMaxWithdrawAndMaxRedeemAreTightAtIdleLiquidity(
+        uint96 depositSeed,
+        uint96 investSeed,
+        uint96 strategyAssetsSeed
+    ) public {
+        uint256 depositAssets = bound(uint256(depositSeed), UNIT, 100_000 * UNIT);
+        uint256 investedAssets = bound(uint256(investSeed), 0, depositAssets);
+        _depositFor(user1, depositAssets);
+        if (investedAssets > 0) {
+            _investAsOperator(investedAssets);
+        }
+
+        uint256 strategyAssets = bound(uint256(strategyAssetsSeed), 0, 2 * depositAssets);
+        deal(address(usdc), address(strategy), strategyAssets);
+
+        uint256 idleAssets = vault.getIdleAssets();
+        uint256 ownerShares = vault.balanceOf(user1);
+        if (idleAssets == 0) {
+            assertEq(vault.maxWithdraw(user1), 0);
+            assertEq(vault.maxRedeem(user1), 0);
+            return;
+        }
+
+        uint256 ownerClaim = vault.previewRedeem(ownerShares);
+        uint256 maxAssets = vault.maxWithdraw(user1);
+        uint256 maxShares = vault.maxRedeem(user1);
+
+        assertEq(maxAssets, ownerClaim < idleAssets ? ownerClaim : idleAssets);
+        assertLe(maxShares, ownerShares);
+        assertLe(vault.previewRedeem(maxShares), idleAssets);
+
+        if (ownerClaim <= idleAssets) {
+            assertEq(maxShares, ownerShares);
+        } else {
+            assertEq(maxShares, vault.previewWithdraw(idleAssets + 1) - 1);
+            assertGt(vault.previewRedeem(maxShares + 1), idleAssets);
+        }
+
+        if (maxShares > 0) {
+            vm.prank(user1);
+            assertLe(vault.redeem(maxShares, user1, user1), idleAssets);
+        }
+    }
+
     function testDivestThenWithdrawSucceeds() public {
         _depositFor(user1, DEPOSIT);
         _investAsOperator(DEPOSIT);

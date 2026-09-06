@@ -74,6 +74,10 @@ The live canary uses explicit operator-managed liquidity:
 
 This limitation is part of the product UI and trust model, not an implementation detail to hide.
 
+While paused or when idle liquidity is zero, `maxWithdraw` and `maxRedeem` both report zero. The zero-idle rule deliberately prevents users from burning shares that round to zero assets. With positive idle liquidity, `maxWithdraw(owner)` is the smaller of the owner's floor-rounded asset claim and current idle USDC. `maxRedeem(owner)` returns the greatest share amount whose floor-rounded claim fits within that idle USDC. When the owner's full claim fits, it returns the full owner balance. Otherwise, for idle liquidity `L`, the exact share boundary is `previewWithdraw(L + 1) - 1`. A simple `convertToShares(L)` is incorrect here because its down rounding can understate the executable maximum.
+
+The positive-idle boundary assumes a stable, successful `totalAssets()` report during the call. A reverting or dishonest strategy can still block or corrupt ERC-4626 views; that is part of the explicit strategy trust boundary in T-04 and remains work for the strategy-failure slice, not a property this checkpoint claims to solve.
+
 ### Asset, share, and rounding units
 
 - The underlying asset must report 6 decimals. Deployment with another decimal model is rejected.
