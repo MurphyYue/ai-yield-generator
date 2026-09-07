@@ -4,7 +4,7 @@
 
 **Release/base branch:** `stage-5`
 
-**Current work branch:** `fix/v4-strategy`
+**Current work branch:** `test/v4-consistency`
 
 **Target release:** `v0.5.0`
 
@@ -36,9 +36,9 @@ Stage 5 is not a yield aggregator, optimizer, or cross-chain navigator.
 
 Stage 5 removes or defers these V4 policy features:
 
-- [ ] Remove performance-fee state and fee-share minting.
-- [ ] Remove large-withdrawal request and approval.
-- [ ] Remove blacklist state and share-transfer restrictions.
+- [x] Remove performance-fee state and fee-share minting from `VaultV4`.
+- [x] Remove large-withdrawal request and approval from `VaultV4`.
+- [x] Remove blacklist state and blacklist-based share-transfer restrictions from `VaultV4`.
 
 Stage 5 keeps:
 
@@ -90,10 +90,10 @@ Stage 5 keeps:
 
 - [x] Make `maxDeposit` and `maxMint` agree with cap, pause, and zero-share acceptance state.
 - [x] Make `maxWithdraw` and `maxRedeem` agree exactly with the declared idle-liquidity and pause policy.
-- [ ] Verify preview and actual operations agree when state is unchanged.
+- [x] Verify every successful deposit, mint, withdraw, and redeem returns the immediate pre-call preview result when accounting state is unchanged; previews remain policy-agnostic quotes.
 - [x] Fix the slippage regression so it reaches the operator-only divest path.
-- [ ] Define and test paused-state deposit, mint, withdraw, redeem, invest, divest, share-transfer, and emergency behavior.
-- [ ] Remove fee, large-withdrawal, and blacklist ABI/events from contract, frontend, indexer, and docs.
+- [x] Define and test paused-state deposit, mint, withdraw, redeem, invest, divest, share-transfer, and emergency behavior.
+- [x] Remove fee, large-withdrawal, and blacklist ABI/events from `VaultV4` and remove active-feature claims from Stage 5 docs.
 
 ## Stage 5.2 — Contract Evidence
 
@@ -153,6 +153,7 @@ Stage 5 keeps:
 
 ### Runtime cleanup
 
+- [ ] Remove deferred fee, large-withdrawal, and blacklist ABI entries, reads, and copy from frontend hooks, components, and prompts.
 - [ ] Remove Arbitrum, Sepolia, Anvil, USDT, and V3 runtime fallbacks.
 - [ ] Remove LI.FI, migration, destination, APY-comparison, and cross-chain components/routes.
 - [ ] Remove unused Sui, Solana, BigMI, permit, and multi-chain dependencies.

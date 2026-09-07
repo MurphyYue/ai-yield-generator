@@ -42,7 +42,7 @@
 | T-08 | Donation or yield consumes deposit-cap headroom or pushes AUM above cap | Denial of new deposits; operators misread above-cap AUM as an accounting failure | Treat cap as a controlled-inflow limit over `totalAssets`; test donation/yield effects; show closed/exhausted state; never exclude donated assets from ownership accounting |
 | T-09 | Role compromise or accidental grant | Unauthorized pause, allocation, or reconfiguration | Separation of duties, exact role tests, deployment assertions, event monitoring, disclosed canary key model |
 | T-10 | Reentrancy or unsafe external-call ordering | Duplicate state transition or fund loss | `nonReentrant`, checks/effects/interactions review, malicious strategy/token tests where meaningful |
-| T-11 | Pause policy inconsistency | Emergency controls fail or unnecessarily trap operations | One function-by-function paused-state matrix with regression tests |
+| T-11 | Pause policy inconsistency | Emergency controls fail, value movement remains possible, or operations are unnecessarily trapped | Documented function-by-function matrix; exact-error tests for all user/operator value movement including zero-value share transfers; emergency recovery remains available and leaves the Vault paused |
 | T-12 | Deployment address/ABI mismatch | Frontend signs calls to wrong or legacy contract | Single manifest, runtime code checks, no fallback addresses, post-deploy assertions |
 | T-13 | Wrong chain | User signs on an unsupported network | Base-only connector/runtime allowlist and explicit network error |
 | T-14 | Wallet identity supplied by request/model | Cross-wallet data exposure or misleading explanation | SIWE-derived server identity; reject body/model wallet fields; spoof tests |

@@ -139,6 +139,15 @@ After the fail-closed strategy-lifecycle slice on `fix/v4-strategy`:
 - Emergency recovery is idle-first and best-effort. Its status boolean does not prove complete recovery; residual assets require a fresh strategy read and block replacement when nonzero or unreadable.
 - V4 pinned-fork proof, deployment tooling, frontend ABI, and indexer integration remain incomplete, so this branch is not deployable.
 
+After the ERC-4626 operational-consistency slice on `test/v4-consistency`:
+
+- V4 accounting suites: 66 passing, 0 failing at the normal 256 fuzz runs.
+- Full non-fork repository suite: 164 passing, 0 failing.
+- Deposit, mint, delegated withdraw, and delegated redeem return their immediate pre-call preview values and emit the exact payer/caller, owner, receiver, assets, and shares.
+- Pausing now blocks deposit, mint, withdraw, redeem, invest, divest, and every share transfer—including zero-value `transfer` and `transferFrom`—with `Pausable.EnforcedPause`.
+- ERC-4626 previews remain policy-agnostic conversion quotes while paused; all four `max*` limits report zero.
+- Admin emergency recovery remains callable while paused and does not unpause the Vault.
+
 No Stage 5 release claim is valid until the gates in [`todo.md`](./todo.md) pass.
 
 ## Development Commands

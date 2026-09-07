@@ -88,6 +88,25 @@ Normal invest and divest operations are atomic. Invest requires both the strateg
 
 Emergency recovery is intentionally different: it is admin-only, remains callable while paused, transfers strategy-idle USDC first, and catches aToken-read or Aave-withdrawal failure so recovered idle funds are not rolled back. `actualReturnedAssets` is the measured Vault balance increase. `protocolCallSucceeded` is diagnostic execution status only; it does not prove full recovery, and the Vault forwards the adapter's status rather than independently verifying Aave. Residual assets must be checked separately and recovered before strategy replacement.
 
+### Pause policy
+
+Pause stops user value movement and ordinary operator allocation; it is not a promise that every administrative or allowance operation is disabled.
+
+| Operation | Behavior while paused |
+|---|---|
+| `deposit` / `mint` | `maxDeposit` and `maxMint` return zero; actual calls revert with `Pausable.EnforcedPause` |
+| `withdraw` / `redeem` | `maxWithdraw` and `maxRedeem` return zero; actual calls revert with `Pausable.EnforcedPause` |
+| ERC-4626 previews | Remain policy-agnostic conversion quotes when their accounting reads succeed |
+| `invest` / `divest` | Authorized operator calls revert with `Pausable.EnforcedPause` |
+| Share `transfer` / `transferFrom` | Every amount, including zero, reverts with `Pausable.EnforcedPause` |
+| `emergencyDivest` | Remains admin-only and callable; best-effort recovery leaves the Vault paused |
+
+Role administration, cap changes, strategy configuration through the zero-assets gate, and ERC-20 allowance updates retain their own authorization rules. They are not value-moving substitutes for the paused operations above.
+
+### ERC-4626 event actors
+
+For `Deposit(sender, owner, assets, shares)`, `sender` is the asset payer/caller and `owner` is the share receiver. For `Withdraw(sender, receiver, owner, assets, shares)`, `sender` is the direct caller, `receiver` receives the assets, and `owner` owns the burned shares. Tests separate all of these actors and bind returned values to the immediate pre-call preview. Ponder must preserve these fields instead of collapsing them into a generic user.
+
 ### Asset, share, and rounding units
 
 - The underlying asset must report 6 decimals. Deployment with another decimal model is rejected.
