@@ -39,7 +39,7 @@ AaveStrategy -> Base Aave V3 / aUSDC
 Base logs -> Ponder -> same-origin activity API -> UI
 ```
 
-Runtime support is Base-only. Arbitrum is retained only for pinned fork compatibility tests.
+The Stage 5 runtime target is Base-only. Arbitrum will be retained only as a pinned V4 fork compatibility gate after the fork-suite rewrite.
 
 ## Lean VaultV4
 
@@ -49,7 +49,7 @@ Stage 5 keeps:
 - Deposit cap.
 - Pause/unpause.
 - Role-controlled invest/divest.
-- Safe strategy lifecycle and emergency recovery.
+- Fail-closed strategy configuration, zero-reported-assets replacement gating, and best-effort emergency recovery.
 - Explicit idle-liquidity withdrawal behavior.
 
 Stage 5 removes or defers performance fees, large-withdrawal approval, blacklist restrictions, bridging, additional strategies, and automatic AI actions.
@@ -128,6 +128,16 @@ After the withdrawal-limit consistency slice:
 - Under stable accounting reads, `maxRedeem` now reports the exact positive-idle share boundary instead of underestimating it with a down-rounded asset-to-share conversion.
 - The withdrawal-limit boundary passes 10,000 generated deposit, allocation, yield, and loss states.
 - Pause and zero idle liquidity fail closed; user funds are not advertised as immediately redeemable while they remain invested.
+
+After the fail-closed strategy-lifecycle slice on `fix/v4-strategy`:
+
+- Aave strategy suite: 49 passing, 0 failing.
+- Full non-fork repository suite: 159 passing, 0 failing.
+- `AaveStrategy` construction rejects missing code, failed reserve lookup, invalid aToken code, and incorrect aToken asset or pool bindings.
+- No strategy-principal ledger remains. Strategy assets come from idle underlying plus the live aToken balance.
+- Vault-observed token balance deltas are authoritative for invest, divest, and emergency outcomes.
+- Emergency recovery is idle-first and best-effort. Its status boolean does not prove complete recovery; residual assets require a fresh strategy read and block replacement when nonzero or unreadable.
+- V4 pinned-fork proof, deployment tooling, frontend ABI, and indexer integration remain incomplete, so this branch is not deployable.
 
 No Stage 5 release claim is valid until the gates in [`todo.md`](./todo.md) pass.
 

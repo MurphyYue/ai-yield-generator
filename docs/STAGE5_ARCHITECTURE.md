@@ -51,16 +51,18 @@ Base event logs --> Ponder --> same-origin activity API --> UI
 - Arbitrum is retained only as pinned fork compatibility evidence.
 - Sepolia, Anvil, Arbitrum, USDT, and V3 addresses may exist in legacy tests or history but must never be runtime fallbacks.
 
-One committed deployment manifest is the runtime source of truth. It contains the chain ID, vault, strategy, asset, pool, aToken, deployment block, source commit, and explorer references. Missing or invalid manifest data must fail closed.
+At release, one committed deployment manifest will be the runtime source of truth. It will contain the chain ID, vault, strategy, asset, pool, aToken, deployment block, source commit, and explorer references. Missing or invalid manifest data must fail closed.
 
 ## Contract Model
 
 `VaultV4` is a non-upgradeable, single-asset ERC-4626 vault.
 
-Users own shares, not principal ledger entries. Yield or loss changes the asset value of each share through `totalAssets()`.
+Users own shares, not principal ledger entries. Neither `VaultV4` nor `AaveStrategy` keeps a strategy-principal counter; observable asset balances are the accounting source of truth. Yield or loss changes the asset value of each share through `totalAssets()`.
 
 ```text
-totalAssets = idle USDC in VaultV4 + assets controlled by AaveStrategy
+strategyAssets = idle USDC in AaveStrategy + live aUSDC/aToken balance
+
+totalAssets = idle USDC in VaultV4 + strategyAssets
 
 user claim = user shares / total share supply * totalAssets
 ```
@@ -76,7 +78,15 @@ This limitation is part of the product UI and trust model, not an implementation
 
 While paused or when idle liquidity is zero, `maxWithdraw` and `maxRedeem` both report zero. The zero-idle rule deliberately prevents users from burning shares that round to zero assets. With positive idle liquidity, `maxWithdraw(owner)` is the smaller of the owner's floor-rounded asset claim and current idle USDC. `maxRedeem(owner)` returns the greatest share amount whose floor-rounded claim fits within that idle USDC. When the owner's full claim fits, it returns the full owner balance. Otherwise, for idle liquidity `L`, the exact share boundary is `previewWithdraw(L + 1) - 1`. A simple `convertToShares(L)` is incorrect here because its down rounding can understate the executable maximum.
 
-The positive-idle boundary assumes a stable, successful `totalAssets()` report during the call. A reverting or dishonest strategy can still block or corrupt ERC-4626 views; that is part of the explicit strategy trust boundary in T-04 and remains work for the strategy-failure slice, not a property this checkpoint claims to solve.
+The strategy slice now fails closed during configuration and replacement and measures fund movements from token-balance deltas. However, `totalAssets()` remains a synchronous external trust dependency: a reverting strategy can block positive-idle ERC-4626 views, while a dishonest strategy can corrupt share price or falsely report zero assets. Balance-delta checks do not remove that T-04 trust boundary.
+
+### Strategy lifecycle and recovery
+
+A candidate strategy must be deployed code, report the Vault's asset as its underlying, and identify this Vault as its authorized caller. Replacing an existing strategy succeeds only when its `totalAssets()` report is exactly zero. A nonzero or reverting report blocks replacement. These checks prevent accidental orphaning by the reviewed adapter; they cannot make an admin-selected dishonest adapter truthful.
+
+Normal invest and divest operations are atomic. Invest requires both the strategy's reported consumption and the Vault's observed outflow to equal the requested amount. Divest enforces `minAmountOut` against the Vault's observed balance increase rather than trusting the strategy or pool return value.
+
+Emergency recovery is intentionally different: it is admin-only, remains callable while paused, transfers strategy-idle USDC first, and catches aToken-read or Aave-withdrawal failure so recovered idle funds are not rolled back. `actualReturnedAssets` is the measured Vault balance increase. `protocolCallSucceeded` is diagnostic execution status only; it does not prove full recovery, and the Vault forwards the adapter's status rather than independently verifying Aave. Residual assets must be checked separately and recovered before strategy replacement.
 
 ### Asset, share, and rounding units
 
@@ -127,7 +137,7 @@ Blocking ERC-4626 share senders and receivers reduces composability and introduc
 
 | Role | Stage 5 authority | Must not do |
 |---|---|---|
-| `DEFAULT_ADMIN_ROLE` | Grant/revoke roles; configure a strategy only through the safe lifecycle | Move user assets through ordinary operations |
+| `DEFAULT_ADMIN_ROLE` | Grant/revoke roles; configure a strategy through the zero-assets gate; invoke emergency recovery | Invest/divest through ordinary operations or set cap unless separately granted |
 | `MANAGER_ROLE` | Pause and unpause | Invest, divest, or change cap |
 | `OPERATOR_ROLE` | Invest and divest with explicit amount/slippage bounds | Change roles, cap, or strategy |
 | `TREASURER_ROLE` | Set the conservative deposit cap | Move strategy funds or change roles |
@@ -145,7 +155,7 @@ The Base canary may initially use one operator-controlled account for multiple r
 6. Yield and loss are allocated proportionally to share ownership.
 7. Preview and actual operations agree when relevant state does not change.
 8. Cap enforcement cannot be bypassed through deposit/mint rounding.
-9. Strategy replacement cannot orphan assets or principal.
+9. Strategy replacement succeeds only when the current strategy reports `totalAssets() == 0`; a nonzero or reverting report blocks replacement.
 10. Unauthorized callers cannot move or reconfigure funds.
 11. `maxWithdraw` and `maxRedeem` do not exceed currently executable idle liquidity.
 12. A paused vault follows one explicitly tested policy for every user and operator action.

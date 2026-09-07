@@ -4,13 +4,13 @@
 
 **Release/base branch:** `stage-5`
 
-**Current work branch:** `fix/v4-accounting`
+**Current work branch:** `fix/v4-strategy`
 
 **Target release:** `v0.5.0`
 
 **Live target:** Base only
 
-**Fork evidence:** Base and Arbitrum at pinned blocks
+**Fork evidence target:** Base and Arbitrum at pinned blocks
 
 **Contract target:** `VaultV4`
 
@@ -78,13 +78,13 @@ Stage 5 keeps:
 
 ### Strategy lifecycle
 
-- [ ] Prevent strategy replacement while the current strategy owns assets or tracked principal.
-- [ ] Validate that a new strategy uses the vault asset and is bound to this vault.
-- [ ] Require Aave configuration to resolve a nonzero aToken.
-- [ ] Include idle underlying held by the strategy in strategy assets.
-- [ ] Recover both Aave position assets and idle underlying during emergency recovery.
-- [ ] Report actual invested/divested amounts in events.
-- [ ] Define loss behavior and prove proportional loss allocation.
+- [x] Block strategy replacement unless the current strategy reports exactly zero `totalAssets()`; a reverting read fails closed.
+- [x] Require candidate strategy code plus exact asset and vault bindings.
+- [x] Fail Aave strategy construction closed unless vault, token, pool, and resolved aToken are contracts and the aToken reports the expected underlying asset and pool.
+- [x] Define strategy `totalAssets()` as idle underlying plus the live aToken balance; keep no internal principal ledger.
+- [x] Make emergency recovery idle-first and best-effort; report measured Vault recovery and protocol-path status, and preserve residual positions for retry and replacement blocking.
+- [x] Treat Vault token-balance deltas as authoritative for invested, divested, and emergency amounts; emit requested and actual amounts where applicable.
+- [x] Prove that a simulated aToken-balance loss reduces share value and is allocated proportionally across two holders.
 
 ### ERC-4626 and operational consistency
 
@@ -97,17 +97,17 @@ Stage 5 keeps:
 
 ## Stage 5.2 — Contract Evidence
 
-- [ ] Exact-value unit and regression tests are green.
+- [x] Exact-value unit and regression tests are green.
 - [ ] Fuzz tests cover deposit/mint/withdraw/redeem rounding boundaries.
 - [ ] Stateful invariants cover multiple users, donations, yield, loss, invest, and divest.
-- [ ] Strategy failure, slippage, loss, emergency recovery, and replacement tests are green.
+- [x] Strategy failure, slippage, loss, emergency recovery, and replacement tests are green.
 - [ ] Base fork tests instantiate V4 and use a pinned block.
 - [ ] Arbitrum fork tests instantiate V4 and use a pinned block.
 - [ ] Fork tests validate expected pool, USDC, and aToken code/configuration.
 - [ ] `forge fmt --check` passes.
-- [ ] Slither has no untriaged High or Medium findings.
-- [ ] Manual threat-model review is recorded.
-- [ ] No known Critical or High contract defect remains.
+- [x] Slither has no untriaged High or Medium findings.
+- [x] Manual threat-model review is recorded.
+- [x] No known Critical or High contract defect remains.
 
 ## Stage 5.3 — Base Deployment and Manifest
 

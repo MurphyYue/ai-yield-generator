@@ -1,5 +1,7 @@
 # Deployed Contract Addresses
 
+> Historical Stage 4/V3 deployments only. No Stage 5/V4 deployment or runtime manifest exists yet; these addresses must not be used as Stage 5 runtime configuration.
+
 ## Base Mainnet (chainId: 8453)
 
 | Contract | Address |

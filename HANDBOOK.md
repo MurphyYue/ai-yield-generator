@@ -1,5 +1,7 @@
 # Vault Navigator — Engineering Handbook
 
+> Historical Stage 4 handbook. It is not authoritative for Stage 5 deployment or runtime behavior. See `README.md`, `todo.md`, `docs/STAGE5_ARCHITECTURE.md`, and `docs/STAGE5_THREAT_MODEL.md`.
+
 A practical guide for getting the project running locally and deploying it to production.
 
 ---
