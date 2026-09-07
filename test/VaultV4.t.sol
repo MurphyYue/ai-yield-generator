@@ -40,22 +40,22 @@ contract StrategyStub is IStrategy {
         failTotalAssets = value;
     }
 
-    function deposit(uint256 amount) external onlyVault returns (bool success) {
+    function deposit(uint256 amount) external onlyVault returns (uint256 actualInvestedAssets) {
         if (failDeposit) {
             underlying.safeTransfer(vault, amount);
-            return false;
+            return 0;
         }
-        emit Deposited(amount);
-        return true;
+        emit Deposited(amount, amount);
+        return amount;
     }
 
-    function withdraw(uint256 amount) external onlyVault returns (bool success) {
+    function withdraw(uint256 amount) external onlyVault returns (uint256 actualReturnedAssets) {
         if (failWithdraw || underlying.balanceOf(address(this)) < amount) {
-            return false;
+            return 0;
         }
         underlying.safeTransfer(vault, amount);
-        emit Withdrawn(amount);
-        return true;
+        emit Withdrawn(amount, amount);
+        return amount;
     }
 
     function totalAssets() external view returns (uint256) {
@@ -67,13 +67,13 @@ contract StrategyStub is IStrategy {
         return address(underlying);
     }
 
-    function emergencyWithdraw() external onlyVault returns (bool success) {
+    function emergencyWithdraw() external onlyVault returns (uint256 actualReturnedAssets, bool protocolCallSucceeded) {
         uint256 amount = underlying.balanceOf(address(this));
         if (amount > 0) {
             underlying.safeTransfer(vault, amount);
         }
-        emit EmergencyWithdrawn(amount);
-        return true;
+        emit EmergencyWithdrawn(amount, true);
+        return (amount, true);
     }
 }
 
@@ -393,7 +393,6 @@ contract VaultV4Test is Test {
 
         vault.emergencyDivest();
         assertEq(vault.getStrategyBalance(), 0);
-        assertEq(vault.strategyPrincipal(), 0);
     }
 
     function testDepositCapEnforced() public {

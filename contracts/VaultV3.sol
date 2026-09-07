@@ -191,10 +191,10 @@ contract VaultV3 is AccessControl, Pausable, ReentrancyGuard {
         // Step 1: Move tokens from vault to strategy contract
         IERC20(token).safeTransfer(address(strategy), amount);
 
-        // Step 2: Tell strategy to deposit into Aave
-        // Strategy's try/catch handles Aave failures and returns tokens to vault if needed
-        bool success = strategy.deposit(amount);
-        require(success, "Strategy deposit failed - tokens returned to vault");
+        // Step 2: Tell the strategy to deploy the transferred assets.
+        // Any revert or amount mismatch rolls back the complete transaction, including Step 1.
+        uint256 actualInvestedAssets = strategy.deposit(amount);
+        require(actualInvestedAssets == amount, "Strategy deposit failed - tokens returned to vault");
 
         emit Invested(token, amount);
     }
@@ -207,18 +207,17 @@ contract VaultV3 is AccessControl, Pausable, ReentrancyGuard {
         require(amount > 0, "Amount must be > 0");
         require(strategy.totalAssets() >= amount, "Insufficient strategy balance");
 
-        bool success = strategy.withdraw(amount);
-        require(success, "Strategy withdraw failed");
+        uint256 actualReturnedAssets = strategy.withdraw(amount);
+        require(actualReturnedAssets > 0, "Strategy withdraw failed");
 
         emit Divested(strategy.underlyingToken(), amount);
     }
 
-    /// @notice Emergency: pull all funds from strategy back to vault (Admin only)
-    /// @dev Bypasses whenNotPaused — usable even in emergency pause
+    /// @notice Emergency: ask the strategy to recover funds to the vault (Admin only)
+    /// @dev Historical V3 compatibility path. It does not inspect V4's best-effort recovery status.
     function emergencyDivest() external onlyRole(DEFAULT_ADMIN_ROLE) {
         require(address(strategy) != address(0), "No strategy set");
-        bool success = strategy.emergencyWithdraw();
-        require(success, "Emergency withdraw failed");
+        strategy.emergencyWithdraw();
     }
 
     /// @notice Get combined balance: vault holdings + strategy holdings for a token

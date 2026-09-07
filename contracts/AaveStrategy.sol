@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import "./IStrategy.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {IStrategy} from "./IStrategy.sol";
 
 interface IAavePool {
     struct ReserveData {
@@ -30,93 +30,167 @@ interface IAavePool {
     function getReserveData(address asset) external view returns (ReserveData memory);
 }
 
+interface IAaveAToken {
+    function UNDERLYING_ASSET_ADDRESS() external view returns (address);
+    function POOL() external view returns (address);
+}
+
 contract AaveStrategy is IStrategy, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     address public immutable vault;
     address public immutable token;
     address public immutable aavePool;
-    address public aToken;
-    uint256 private _depositedToPool;
+    address public immutable aToken;
+
+    error InvalidVault(address vault);
+    error InvalidToken(address token);
+    error InvalidPool(address pool);
+    error ReserveLookupFailed(address pool, address token);
+    error InvalidAToken(address aToken);
+    error ATokenUnderlyingMismatch(address expectedUnderlying, address actualUnderlying);
+    error ATokenPoolMismatch(address expectedPool, address actualPool);
+    error CallerNotVault(address caller);
+    error InsufficientAssets(uint256 requestedAssets, uint256 availableAssets);
+    error SupplyFailed();
+    error SupplyAmountMismatch(uint256 requestedAssets, uint256 actualInvestedAssets);
+    error WithdrawFailed();
 
     modifier onlyVault() {
-        require(msg.sender == vault, "AaveStrategy: caller is not the vault");
+        if (msg.sender != vault) {
+            revert CallerNotVault(msg.sender);
+        }
         _;
     }
 
-    constructor(address _vault, address _token, address _aavePool) {
-        require(_vault != address(0), "AaveStrategy: invalid vault");
-        require(_token != address(0), "AaveStrategy: invalid token");
-        require(_aavePool != address(0), "AaveStrategy: invalid pool");
-        vault = _vault;
-        token = _token;
-        aavePool = _aavePool;
-        _resolveAToken();
-    }
+    constructor(address vault_, address token_, address aavePool_) {
+        if (vault_ == address(0) || vault_.code.length == 0) {
+            revert InvalidVault(vault_);
+        }
+        if (token_ == address(0) || token_.code.length == 0) {
+            revert InvalidToken(token_);
+        }
+        if (aavePool_ == address(0) || aavePool_.code.length == 0) {
+            revert InvalidPool(aavePool_);
+        }
 
-    function deposit(uint256 amount) external onlyVault nonReentrant returns (bool success) {
-        require(IERC20(token).balanceOf(address(this)) >= amount, "AaveStrategy: insufficient balance");
-        _resolveAToken();
-
-        IERC20(token).forceApprove(aavePool, amount);
-        _depositedToPool += amount;
-
-        try IAavePool(aavePool).supply(token, amount, address(this), 0) {
-            emit Deposited(amount);
-            return true;
+        address resolvedAToken = address(0);
+        try IAavePool(aavePool_).getReserveData(token_) returns (IAavePool.ReserveData memory resolvedReserve) {
+            resolvedAToken = resolvedReserve.aTokenAddress;
         } catch {
-            _depositedToPool -= amount;
-            IERC20(token).forceApprove(aavePool, 0);
-            IERC20(token).safeTransfer(vault, amount);
-            return false;
+            revert ReserveLookupFailed(aavePool_, token_);
         }
-    }
 
-    function withdraw(uint256 amount) external onlyVault nonReentrant returns (bool success) {
-        require(totalAssets() >= amount, "AaveStrategy: exceeds total assets");
+        if (resolvedAToken == address(0) || resolvedAToken.code.length == 0) {
+            revert InvalidAToken(resolvedAToken);
+        }
 
-        uint256 principalReduction = amount > _depositedToPool ? _depositedToPool : amount;
-        _depositedToPool -= principalReduction;
-
-        try IAavePool(aavePool).withdraw(token, amount, vault) {
-            emit Withdrawn(amount);
-            return true;
+        address resolvedUnderlying = address(0);
+        try IAaveAToken(resolvedAToken).UNDERLYING_ASSET_ADDRESS() returns (address underlying) {
+            resolvedUnderlying = underlying;
         } catch {
-            _depositedToPool += principalReduction;
-            return false;
+            revert InvalidAToken(resolvedAToken);
         }
-    }
+        if (resolvedUnderlying != token_) {
+            revert ATokenUnderlyingMismatch(token_, resolvedUnderlying);
+        }
 
-    function totalAssets() public view returns (uint256) {
-        if (aToken != address(0)) {
-            return IERC20(aToken).balanceOf(address(this));
+        address resolvedPool = address(0);
+        try IAaveAToken(resolvedAToken).POOL() returns (address pool) {
+            resolvedPool = pool;
+        } catch {
+            revert InvalidAToken(resolvedAToken);
         }
-        return _depositedToPool;
+        if (resolvedPool != aavePool_) {
+            revert ATokenPoolMismatch(aavePool_, resolvedPool);
+        }
+
+        vault = vault_;
+        token = token_;
+        aavePool = aavePool_;
+        aToken = resolvedAToken;
     }
 
     function underlyingToken() external view returns (address) {
         return token;
     }
 
-    function emergencyWithdraw() external onlyVault nonReentrant returns (bool success) {
-        uint256 amount = totalAssets();
-        if (amount == 0) return true;
-
-        _depositedToPool = 0;
-        try IAavePool(aavePool).withdraw(token, amount, vault) {
-            emit EmergencyWithdrawn(amount);
-            return true;
-        } catch {
-            _depositedToPool = amount;
-            return false;
-        }
+    function totalAssets() public view returns (uint256) {
+        return IERC20(token).balanceOf(address(this)) + IERC20(aToken).balanceOf(address(this));
     }
 
-    function _resolveAToken() internal {
-        if (aToken != address(0)) return;
+    function deposit(uint256 requestedAssets) external onlyVault nonReentrant returns (uint256 actualInvestedAssets) {
+        uint256 idleBefore = IERC20(token).balanceOf(address(this));
+        if (idleBefore < requestedAssets) {
+            revert InsufficientAssets(requestedAssets, idleBefore);
+        }
 
-        try IAavePool(aavePool).getReserveData(token) returns (IAavePool.ReserveData memory reserveData) {
-            aToken = reserveData.aTokenAddress;
-        } catch {}
+        IERC20(token).forceApprove(aavePool, requestedAssets);
+        try IAavePool(aavePool).supply(token, requestedAssets, address(this), 0) {}
+        catch {
+            revert SupplyFailed();
+        }
+        IERC20(token).forceApprove(aavePool, 0);
+
+        uint256 idleAfter = IERC20(token).balanceOf(address(this));
+        actualInvestedAssets = idleAfter > idleBefore ? 0 : idleBefore - idleAfter;
+        if (actualInvestedAssets != requestedAssets) {
+            revert SupplyAmountMismatch(requestedAssets, actualInvestedAssets);
+        }
+
+        emit Deposited(requestedAssets, actualInvestedAssets);
+    }
+
+    function withdraw(uint256 requestedAssets) external onlyVault nonReentrant returns (uint256 actualReturnedAssets) {
+        uint256 availableAssets = totalAssets();
+        if (requestedAssets > availableAssets) {
+            revert InsufficientAssets(requestedAssets, availableAssets);
+        }
+
+        uint256 vaultBalanceBefore = IERC20(token).balanceOf(vault);
+        uint256 idleAssets = IERC20(token).balanceOf(address(this));
+        uint256 idleToReturn = idleAssets < requestedAssets ? idleAssets : requestedAssets;
+        if (idleToReturn > 0) {
+            IERC20(token).safeTransfer(vault, idleToReturn);
+        }
+
+        uint256 protocolShortfall = requestedAssets - idleToReturn;
+        if (protocolShortfall > 0) {
+            try IAavePool(aavePool).withdraw(token, protocolShortfall, vault) returns (uint256) {}
+            catch {
+                revert WithdrawFailed();
+            }
+        }
+
+        actualReturnedAssets = IERC20(token).balanceOf(vault) - vaultBalanceBefore;
+        emit Withdrawn(requestedAssets, actualReturnedAssets);
+    }
+
+    function emergencyWithdraw()
+        external
+        onlyVault
+        nonReentrant
+        returns (uint256 actualReturnedAssets, bool protocolCallSucceeded)
+    {
+        uint256 vaultBalanceBefore = IERC20(token).balanceOf(vault);
+        uint256 idleAssets = IERC20(token).balanceOf(address(this));
+        if (idleAssets > 0) {
+            IERC20(token).safeTransfer(vault, idleAssets);
+        }
+
+        protocolCallSucceeded = true;
+        try IERC20(aToken).balanceOf(address(this)) returns (uint256 protocolAssets) {
+            if (protocolAssets > 0) {
+                try IAavePool(aavePool).withdraw(token, type(uint256).max, vault) returns (uint256) {}
+                catch {
+                    protocolCallSucceeded = false;
+                }
+            }
+        } catch {
+            protocolCallSucceeded = false;
+        }
+
+        actualReturnedAssets = IERC20(token).balanceOf(vault) - vaultBalanceBefore;
+        emit EmergencyWithdrawn(actualReturnedAssets, protocolCallSucceeded);
     }
 }

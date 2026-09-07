@@ -23,17 +23,21 @@ contract VaultV4 is ERC4626, AccessControl, Pausable, ReentrancyGuard {
     /// @dev Zero closes deposits/mints. Max uint is the explicit unlimited sentinel.
     ///      Yield and unsolicited donations may increase totalAssets above a finite cap.
     uint256 public depositCap;
-    uint256 public strategyPrincipal;
-
     IStrategy public strategy;
 
-    event StrategySet(address indexed strategy);
-    event Invested(uint256 amount);
-    event Divested(uint256 requestedAmount, uint256 receivedAmount);
+    event StrategySet(address indexed previousStrategy, address indexed newStrategy);
+    event Invested(address indexed strategy, uint256 requestedAssets, uint256 actualInvestedAssets);
+    event Divested(address indexed strategy, uint256 requestedAssets, uint256 actualReturnedAssets);
+    event EmergencyDivested(address indexed strategy, uint256 actualReturnedAssets, bool protocolCallSucceeded);
     event DepositCapUpdated(uint256 oldCap, uint256 newCap);
 
     error UnsupportedAssetDecimals(uint8 actualDecimals);
     error ZeroSharesForAssets(uint256 assets);
+    error InvalidStrategy(address strategy);
+    error StrategyHasAssets(address strategy, uint256 assets);
+    error StrategyAssetMismatch(address expectedAsset, address actualAsset);
+    error StrategyVaultMismatch(address expectedVault, address actualVault);
+    error StrategyDepositMismatch(uint256 requestedAssets, uint256 reportedAssets, uint256 observedAssets);
 
     constructor(address asset_) ERC20("Yield Navigator Vault Share", "ynUSDC") ERC4626(IERC20(asset_)) {
         require(asset_ != address(0), "Invalid asset");
@@ -189,10 +193,31 @@ contract VaultV4 is ERC4626, AccessControl, Pausable, ReentrancyGuard {
     }
 
     function setStrategy(address newStrategy) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        require(newStrategy != address(0), "Invalid strategy");
-        require(IStrategy(newStrategy).underlyingToken() == asset(), "Strategy asset mismatch");
-        strategy = IStrategy(newStrategy);
-        emit StrategySet(newStrategy);
+        if (newStrategy == address(0) || newStrategy.code.length == 0) {
+            revert InvalidStrategy(newStrategy);
+        }
+
+        IStrategy candidate = IStrategy(newStrategy);
+        address candidateAsset = candidate.underlyingToken();
+        if (candidateAsset != asset()) {
+            revert StrategyAssetMismatch(asset(), candidateAsset);
+        }
+
+        address candidateVault = candidate.vault();
+        if (candidateVault != address(this)) {
+            revert StrategyVaultMismatch(address(this), candidateVault);
+        }
+
+        address previousStrategy = address(strategy);
+        if (previousStrategy != address(0)) {
+            uint256 previousStrategyAssets = strategy.totalAssets();
+            if (previousStrategyAssets != 0) {
+                revert StrategyHasAssets(previousStrategy, previousStrategyAssets);
+            }
+        }
+
+        strategy = candidate;
+        emit StrategySet(previousStrategy, newStrategy);
     }
 
     function setDepositCap(uint256 newCap) external onlyRole(TREASURER_ROLE) {
@@ -206,44 +231,45 @@ contract VaultV4 is ERC4626, AccessControl, Pausable, ReentrancyGuard {
         require(amount > 0, "Amount must be > 0");
         require(IERC20(asset()).balanceOf(address(this)) >= amount, "Insufficient idle assets");
 
-        IERC20(asset()).safeTransfer(address(strategy), amount);
-        bool success = strategy.deposit(amount);
-        require(success, "Strategy deposit failed");
+        address strategyAddress = address(strategy);
+        uint256 vaultBalanceBefore = IERC20(asset()).balanceOf(address(this));
+        IERC20(asset()).safeTransfer(strategyAddress, amount);
+        uint256 reportedInvestedAssets = strategy.deposit(amount);
+        uint256 vaultBalanceAfter = IERC20(asset()).balanceOf(address(this));
+        uint256 observedInvestedAssets =
+            vaultBalanceAfter > vaultBalanceBefore ? 0 : vaultBalanceBefore - vaultBalanceAfter;
+        if (reportedInvestedAssets != amount || observedInvestedAssets != amount) {
+            revert StrategyDepositMismatch(amount, reportedInvestedAssets, observedInvestedAssets);
+        }
 
-        strategyPrincipal += amount;
-        emit Invested(amount);
+        emit Invested(strategyAddress, amount, observedInvestedAssets);
     }
 
     function divest(uint256 amount, uint256 minAmountOut) external nonReentrant whenNotPaused onlyRole(OPERATOR_ROLE) {
         require(address(strategy) != address(0), "No strategy set");
         require(amount > 0, "Amount must be > 0");
 
-        uint256 strategyAssetsBefore = strategy.totalAssets();
-        require(strategyAssetsBefore >= amount, "Insufficient strategy balance");
+        require(strategy.totalAssets() >= amount, "Insufficient strategy balance");
 
-        uint256 principalBefore = strategyPrincipal;
-        uint256 principalPortion = strategyAssetsBefore == 0 ? 0 : (amount * principalBefore) / strategyAssetsBefore;
-        if (principalPortion > principalBefore) {
-            principalPortion = principalBefore;
-        }
-
+        address strategyAddress = address(strategy);
         uint256 balanceBefore = IERC20(asset()).balanceOf(address(this));
-        bool success = strategy.withdraw(amount);
-        require(success, "Strategy withdraw failed");
+        strategy.withdraw(amount);
 
         uint256 received = IERC20(asset()).balanceOf(address(this)) - balanceBefore;
         require(received >= minAmountOut, "Slippage: received less than minAmountOut");
 
-        strategyPrincipal = principalBefore - principalPortion;
-
-        emit Divested(amount, received);
+        emit Divested(strategyAddress, amount, received);
     }
 
     function emergencyDivest() external nonReentrant onlyRole(DEFAULT_ADMIN_ROLE) {
         require(address(strategy) != address(0), "No strategy set");
-        bool success = strategy.emergencyWithdraw();
-        require(success, "Emergency withdraw failed");
-        strategyPrincipal = 0;
+
+        address strategyAddress = address(strategy);
+        uint256 balanceBefore = IERC20(asset()).balanceOf(address(this));
+        (, bool protocolCallSucceeded) = strategy.emergencyWithdraw();
+        uint256 received = IERC20(asset()).balanceOf(address(this)) - balanceBefore;
+
+        emit EmergencyDivested(strategyAddress, received, protocolCallSucceeded);
     }
 
     function getStrategyBalance() external view returns (uint256) {
