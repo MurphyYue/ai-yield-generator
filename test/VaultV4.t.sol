@@ -78,7 +78,15 @@ contract StrategyStub is IStrategy {
 }
 
 contract VaultV4Test is Test {
+    event Deposit(address indexed sender, address indexed owner, uint256 assets, uint256 shares);
+    event Withdraw(
+        address indexed sender, address indexed receiver, address indexed owner, uint256 assets, uint256 shares
+    );
+    event EmergencyWithdrawn(uint256 actualReturnedAssets, bool protocolCallSucceeded);
+    event EmergencyDivested(address indexed strategy, uint256 actualReturnedAssets, bool protocolCallSucceeded);
     event DepositCapUpdated(uint256 oldCap, uint256 newCap);
+    event Paused(address account);
+    event Unpaused(address account);
 
     VaultV4 public vault;
     MockERC20 public usdc;
@@ -149,6 +157,32 @@ contract VaultV4Test is Test {
         assertEq(vault.totalSupply(), DEPOSIT * SHARE_SCALE);
     }
 
+    function testDepositMatchesPreviewAndRecordsPayerAndReceiver() public {
+        uint256 assets = 25 * UNIT;
+        uint256 expectedShares = vault.previewDeposit(assets);
+
+        vm.expectEmit(true, true, false, true, address(vault));
+        emit Deposit(user1, user2, assets, expectedShares);
+        vm.prank(user1);
+        uint256 actualShares = vault.deposit(assets, user2);
+
+        assertEq(actualShares, expectedShares);
+        assertEq(vault.balanceOf(user2), expectedShares);
+    }
+
+    function testMintMatchesPreviewAndRecordsPayerAndReceiver() public {
+        uint256 shares = 25 * UNIT * SHARE_SCALE;
+        uint256 expectedAssets = vault.previewMint(shares);
+
+        vm.expectEmit(true, true, false, true, address(vault));
+        emit Deposit(user1, user2, expectedAssets, shares);
+        vm.prank(user1);
+        uint256 actualAssets = vault.mint(shares, user2);
+
+        assertEq(actualAssets, expectedAssets);
+        assertEq(vault.balanceOf(user2), shares);
+    }
+
     function testSharePriceGrowsAfterYield() public {
         _depositFor(user1, DEPOSIT);
         uint256 shares = vault.balanceOf(user1);
@@ -173,6 +207,42 @@ contract VaultV4Test is Test {
         assertEq(sharesBurned, expectedSharesBurned);
         assertLt(vault.balanceOf(user1), sharesBefore);
         assertEq(usdc.balanceOf(user1), 500_000 * UNIT - DEPOSIT + 40 * UNIT);
+    }
+
+    function testDelegatedWithdrawMatchesPreviewAndRecordsAllActors() public {
+        _depositFor(user1, DEPOSIT);
+        uint256 assets = 25 * UNIT;
+        uint256 expectedShares = vault.previewWithdraw(assets);
+        uint256 receiverBalanceBefore = usdc.balanceOf(user2);
+
+        vm.prank(user1);
+        assertTrue(vault.approve(operator, expectedShares));
+
+        vm.expectEmit(true, true, true, true, address(vault));
+        emit Withdraw(operator, user2, user1, assets, expectedShares);
+        vm.prank(operator);
+        uint256 actualShares = vault.withdraw(assets, user2, user1);
+
+        assertEq(actualShares, expectedShares);
+        assertEq(usdc.balanceOf(user2), receiverBalanceBefore + assets);
+    }
+
+    function testDelegatedRedeemMatchesPreviewAndRecordsAllActors() public {
+        _depositFor(user1, DEPOSIT);
+        uint256 shares = vault.balanceOf(user1) / 4;
+        uint256 expectedAssets = vault.previewRedeem(shares);
+        uint256 receiverBalanceBefore = usdc.balanceOf(user2);
+
+        vm.prank(user1);
+        assertTrue(vault.approve(operator, shares));
+
+        vm.expectEmit(true, true, true, true, address(vault));
+        emit Withdraw(operator, user2, user1, expectedAssets, shares);
+        vm.prank(operator);
+        uint256 actualAssets = vault.redeem(shares, user2, user1);
+
+        assertEq(actualAssets, expectedAssets);
+        assertEq(usdc.balanceOf(user2), receiverBalanceBefore + expectedAssets);
     }
 
     function testTwoUsersShareYieldProportionally() public {
@@ -265,15 +335,33 @@ contract VaultV4Test is Test {
         vault.redeem(1, user1, user1);
     }
 
-    function testPauseClosesWithdrawAndRedeem() public {
+    function testPausedUserActionsRevertWhilePreviewsRemainQuotes() public {
         _depositFor(user1, DEPOSIT);
         uint256 userShares = vault.balanceOf(user1);
+        uint256 depositPreview = vault.previewDeposit(UNIT);
+        uint256 mintPreview = vault.previewMint(SHARE_SCALE);
+        uint256 withdrawPreview = vault.previewWithdraw(UNIT);
+        uint256 redeemPreview = vault.previewRedeem(SHARE_SCALE);
 
         vm.prank(manager);
         vault.pause();
 
+        assertEq(vault.maxDeposit(user2), 0);
+        assertEq(vault.maxMint(user2), 0);
         assertEq(vault.maxWithdraw(user1), 0);
         assertEq(vault.maxRedeem(user1), 0);
+        assertEq(vault.previewDeposit(UNIT), depositPreview);
+        assertEq(vault.previewMint(SHARE_SCALE), mintPreview);
+        assertEq(vault.previewWithdraw(UNIT), withdrawPreview);
+        assertEq(vault.previewRedeem(SHARE_SCALE), redeemPreview);
+
+        vm.prank(user2);
+        vm.expectRevert(Pausable.EnforcedPause.selector);
+        vault.deposit(UNIT, user2);
+
+        vm.prank(user2);
+        vm.expectRevert(Pausable.EnforcedPause.selector);
+        vault.mint(SHARE_SCALE, user2);
 
         vm.prank(user1);
         vm.expectRevert(Pausable.EnforcedPause.selector);
@@ -391,8 +479,30 @@ contract VaultV4Test is Test {
         vm.prank(manager);
         vault.pause();
 
+        assertTrue(vault.hasRole(vault.DEFAULT_ADMIN_ROLE(), address(this)));
+        vm.expectEmit(false, false, false, true, address(strategy));
+        emit EmergencyWithdrawn(DEPOSIT, true);
+        vm.expectEmit(true, false, false, true, address(vault));
+        emit EmergencyDivested(address(strategy), DEPOSIT, true);
         vault.emergencyDivest();
+
+        assertTrue(vault.paused());
         assertEq(vault.getStrategyBalance(), 0);
+        assertEq(vault.getIdleAssets(), DEPOSIT);
+    }
+
+    function testPauseAndUnpauseEventsRecordManagerCaller() public {
+        vm.expectEmit(false, false, false, true, address(vault));
+        emit Paused(manager);
+        vm.prank(manager);
+        vault.pause();
+
+        vm.expectEmit(false, false, false, true, address(vault));
+        emit Unpaused(manager);
+        vm.prank(manager);
+        vault.unpause();
+
+        assertFalse(vault.paused());
     }
 
     function testDepositCapEnforced() public {
@@ -755,15 +865,34 @@ contract VaultV4Test is Test {
         assertEq(vault.balanceOf(user2), transferShares);
     }
 
-    function testShareTransferRevertsWhilePaused() public {
+    function testShareTransferAndTransferFromRevertWhilePausedIncludingZeroValue() public {
         _depositFor(user1, DEPOSIT);
+        uint256 userShares = vault.balanceOf(user1);
+
+        vm.prank(user1);
+        assertTrue(vault.approve(operator, type(uint256).max));
 
         vm.prank(manager);
         vault.pause();
 
-        uint256 transferShares = vault.balanceOf(user1) / 4;
+        uint256 transferShares = userShares / 4;
         vm.prank(user1);
-        vm.expectRevert("Vault is paused");
+        vm.expectRevert(Pausable.EnforcedPause.selector);
         vault.transfer(user2, transferShares);
+
+        vm.prank(user1);
+        vm.expectRevert(Pausable.EnforcedPause.selector);
+        vault.transfer(user2, 0);
+
+        vm.prank(operator);
+        vm.expectRevert(Pausable.EnforcedPause.selector);
+        vault.transferFrom(user1, user2, transferShares);
+
+        vm.prank(operator);
+        vm.expectRevert(Pausable.EnforcedPause.selector);
+        vault.transferFrom(user1, user2, 0);
+
+        assertEq(vault.balanceOf(user1), userShares);
+        assertEq(vault.balanceOf(user2), 0);
     }
 }

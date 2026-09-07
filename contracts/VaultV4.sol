@@ -305,11 +305,7 @@ contract VaultV4 is ERC4626, AccessControl, Pausable, ReentrancyGuard {
     }
 
     function _update(address from, address to, uint256 value) internal override {
-        if (value > 0) {
-            if (paused()) {
-                revert("Vault is paused");
-            }
-        }
+        _requireNotPaused();
         super._update(from, to, value);
     }
 }
