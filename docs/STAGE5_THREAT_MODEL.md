@@ -25,7 +25,7 @@
 - `DEFAULT_ADMIN_ROLE` can grant roles and configure strategy authority; compromise is critical.
 - `OPERATOR_ROLE` controls the idle/strategy allocation but must not own depositor shares.
 - Strategy bindings prove configuration identity, not accounting honesty. An admin-selected strategy can still lie through `totalAssets()` or callback results; adapter review and admin-key security remain trusted.
-- The Ponder database is derived and may lag or fail.
+- RPC/provider log responses may fail, rate-limit, or truncate; activity history is derived evidence and must expose incomplete or unknown states.
 - The LLM provider may fail, return malformed output, or follow adversarial text; it is never trusted for facts or authority.
 
 ## Threat Register
@@ -33,7 +33,7 @@
 | ID | Threat | Consequence | Required control/evidence |
 |---|---|---|---|
 | T-01 | First-depositor donation/inflation attack | Victim receives zero or unfairly few shares; attacker captures value | Offset 6; reject zero-share deposits before transfer; exact one-share boundary tests; single-victim attacker-first and attacker-last profit fuzzing |
-| T-02 | Rounding creates value | Repeated conversions extract assets or overstate claims | Exact conversion/aggregate-claim inequalities plus 10,000-run view, state-changing, multi-holder, donation, and loss fuzzing |
+| T-02 | Rounding creates value | Repeated conversions extract assets or overstate claims | Exact conversion/aggregate-claim inequalities; 10,000-run focused fuzzing; multi-user stateful ghost accounting across entry, exit, transfer, donation, yield, loss, invest, and divest |
 | T-03 | Strategy replacement while funds remain | Old strategy assets disappear from `totalAssets`; withdrawals are impaired | Require candidate code plus vault/asset bindings; accept replacement only when the current strategy reports exactly zero `totalAssets()`; a reverting read fails closed; test both idle-underlying and aToken residuals |
 | T-04 | Strategy lies, reverts, or reports loss | Incorrect share price, denial of service, false-zero replacement approval, or depositor loss | Admin installs only a reviewed adapter; Vault balance deltas are authoritative for invest/divest/emergency amounts; exact revert and misreport tests; disclose that `totalAssets()` honesty and availability remain residual trust |
 | T-05 | Invalid Aave pool/aToken configuration | Funds sent to an unusable integration or yield omitted | Constructor rejects missing code, failed reserve lookup, zero/no-code aToken, and incorrect aToken underlying/pool bindings; deterministic tests cover these checks; pinned V4 fork validation remains a release gate |
@@ -49,10 +49,16 @@
 | T-15 | Thread/checkpoint ownership failure | Cross-user conversation or state disclosure | No threads/checkpointer in minimum explainer |
 | T-16 | Prompt injection or model invention | False numbers, action advice, or write-path influence | Closed topics, deterministic evidence/findings, structured validation, no tools/write client, deterministic fallback |
 | T-17 | Mixed-block reads | Internally inconsistent accounting snapshot | Pin every position read to one confirmed block; cite block/hash in result |
-| T-18 | Indexer lag or incorrect event actor | Misleading history | Event-specific schema, transaction-sender actor, visible indexed block, receipt reconciliation |
-| T-19 | Database or AI outage | Product becomes unavailable | Core reads/writes do not depend on database or AI; evidence UI has deterministic fallback |
+| T-18 | RPC log-range gap, truncation, or incorrect event actor | Missing or misleading history | Query only the manifest V4 address from its deployment block to one pinned confirmed end block; chunk log ranges; expose range and partial/failure state; derive operator actors from `transaction.from`; reconcile with receipts |
+| T-19 | Activity-history or AI outage | Product becomes unavailable | Core on-chain reads/writes do not depend on the history API or AI; activity history has no database dependency and the evidence UI has deterministic fallback; SIWE session storage is a separate boundary |
 | T-20 | False security claims | Users treat a portfolio canary as production-safe | Persistent unaudited/not-for-production disclosure; never call internal review an audit |
 | T-21 | Emergency protocol recovery reverts or only partially succeeds | A full rollback loses recoverable idle funds, or status is mistaken for complete recovery | Transfer strategy-idle USDC first; catch aToken-read and Aave-withdrawal failures; record the Vault balance delta separately from protocol-path status; require residual assets to be recovered before replacement; test failure, partial recovery, and retry |
+
+## Stateful Invariant Verification
+
+The `test/v4-invariants` checkpoint uses four tracked holders and the complete local `VaultV4 -> AaveStrategy -> MockAavePool -> MockAToken` path. Seven invariants independently reconcile managed-asset flow, share flow, receipt-token backing, exhaustive claims, idle-liquidity limits, fixed USDC supply, and immutable configuration. The normal 256-by-64 profile produced 114,688 handler invocations; a separate 1,000-by-100 run produced 700,000 invocations. Both completed with zero reverts or discards under `fail_on_revert = true`.
+
+This evidence is bounded by its handler and mocks. A selector invocation can return early when no valid amount exists, so a deterministic test separately executes all ten transitions and both donation destinations. The suite does not model arbitrary token behavior, a dishonest strategy, protocol governance changes, generalized multi-victim MEV, or live Aave state; adversarial unit tests, pinned forks, and the disclosed T-04 trust boundary remain necessary.
 
 ## Strategy Slice Verification and Static-Analysis Triage
 
@@ -83,7 +89,7 @@ Release is blocked if any of these are false:
 2. No demonstrated donation sequence gives the attacker positive profit from a victim deposit within the tested domain.
 3. No strategy update is accepted when the current strategy reports nonzero assets; a reverting asset read blocks the update.
 4. No unauthorized account can invest, divest, pause, set cap, or configure strategy.
-5. No runtime fallback can point the UI or indexer to V3 or another chain.
+5. No runtime fallback can point the UI or activity API to V3 or another chain.
 6. No AI input or output can select a wallet identity or reach a financial write.
 7. No Critical or High funds-at-risk defect remains knowingly open.
 

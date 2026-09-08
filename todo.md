@@ -4,7 +4,7 @@
 
 **Release/base branch:** `stage-5`
 
-**Current work branch:** `test/v4-consistency`
+**Current work branch:** `test/v4-invariants`
 
 **Target release:** `v0.5.0`
 
@@ -28,7 +28,7 @@ Stage 5 is not a yield aggregator, optimizer, or cross-chain navigator.
 - One Aave V3 strategy is supported.
 - The live deployment is a low-value, unaudited canary; it must not solicit public funds.
 - Runtime code must resolve addresses from one deployment manifest. No V3 or environment fallback is allowed.
-- The core vault UI must work without a database or AI provider.
+- Core on-chain reads and writes must work without an activity-history database or AI provider; SIWE session storage is a separate boundary.
 - AI is read-only. It cannot construct, populate, recommend, or execute financial actions.
 - Every behavior-changing change follows `Reason -> Predict -> Patch -> Prove -> Retell`.
 
@@ -56,13 +56,14 @@ Stage 5 keeps:
 - [x] Verify `stage-4` is exactly one commit ahead of its remote with no divergence.
 - [x] Push the Stage 4 commit.
 - [x] Create and push `stage-4-snapshot-2026-08-30`.
-- [x] Tag the nested Ponder repository.
-- [x] Create and verify a complete Ponder Git bundle.
 - [x] Create and publish `stage-5` from the exact Stage 4 snapshot.
-- [x] Import Ponder as normal monorepo history without a nested `.git` directory.
+- [x] Import and publish the complete three-commit Ponder history at tip `4fa0054` through subtree merge `fb1df43`.
+- [x] Verify the imported `ponder-indexing/` tree matches the preserved tip and contains no nested `.git` directory.
 - [x] Replace obsolete README product claims.
 - [x] Record the Stage 5 architecture and threat model.
 - [x] Commit and push the Stage 5 source-of-truth documents.
+
+The Ponder migration used a verified temporary bundle and annotated nested tag. The published subtree merge is the durable preservation artifact.
 
 ## Stage 5.1 — Lean VaultV4 Specification and Corrections
 
@@ -84,7 +85,7 @@ Stage 5 keeps:
 - [x] Define strategy `totalAssets()` as idle underlying plus the live aToken balance; keep no internal principal ledger.
 - [x] Make emergency recovery idle-first and best-effort; report measured Vault recovery and protocol-path status, and preserve residual positions for retry and replacement blocking.
 - [x] Treat Vault token-balance deltas as authoritative for invested, divested, and emergency amounts; emit requested and actual amounts where applicable.
-- [x] Prove that a simulated aToken-balance loss reduces share value and is allocated proportionally across two holders.
+- [x] Demonstrate with unequal holders that a simulated aToken-balance loss reduces share value and allocates claim loss proportionally without changing share balances.
 
 ### ERC-4626 and operational consistency
 
@@ -99,7 +100,7 @@ Stage 5 keeps:
 
 - [x] Exact-value unit and regression tests are green.
 - [ ] Fuzz tests cover deposit/mint/withdraw/redeem rounding boundaries.
-- [ ] Stateful invariants cover multiple users, donations, yield, loss, invest, and divest.
+- [x] Stateful invariants cover multiple users, donations, yield, loss, invest, and divest.
 - [x] Strategy failure, slippage, loss, emergency recovery, and replacement tests are green.
 - [ ] Base fork tests instantiate V4 and use a pinned block.
 - [ ] Arbitrum fork tests instantiate V4 and use a pinned block.
@@ -139,7 +140,7 @@ Stage 5 keeps:
 - [ ] Show wallet USDC, vault shares, redeemable assets, and currently withdrawable assets.
 - [ ] Simulate and execute approval plus deposit.
 - [ ] Simulate and execute withdrawal.
-- [ ] Show submitted, confirmed, indexed, and failed transaction states with explorer links.
+- [ ] Show submitted, confirmed, and failed transaction states with explorer links; expose confirmed activity separately.
 - [ ] Handle wrong network, insufficient balance, insufficient allowance, cap, pause, and insufficient idle liquidity.
 
 ### Operator view
@@ -156,21 +157,21 @@ Stage 5 keeps:
 - [ ] Remove deferred fee, large-withdrawal, and blacklist ABI entries, reads, and copy from frontend hooks, components, and prompts.
 - [ ] Remove Arbitrum, Sepolia, Anvil, USDT, and V3 runtime fallbacks.
 - [ ] Remove LI.FI, migration, destination, APY-comparison, and cross-chain components/routes.
+- [ ] Remove Ponder environment variables, GraphQL calls, agent tools, and runtime copy; retain `ponder-indexing/` only as historical Stage 4 source.
 - [ ] Remove unused Sui, Solana, BigMI, permit, and multi-chain dependencies.
 - [ ] Frontend lint and typecheck pass.
-- [ ] Production build completes without database, hydration, or server-side `localStorage` errors.
+- [ ] Production build completes without requiring a live database and has no hydration or server-side `localStorage` errors.
 
-## Stage 5.5 — Ponder V4 Indexer
+## Stage 5.5 — Direct V4 Activity Evidence
 
-- [ ] Replace V3 ABI, address, and handlers with the frozen V4 ABI and manifest.
-- [ ] Start at the exact Base V4 deployment block.
-- [ ] Store event-specific caller, owner, receiver, assets, shares, and actual amounts.
-- [ ] Derive operator actors from the transaction sender instead of the token address.
-- [ ] Index Deposit, Withdraw, Invested, Divested, pause, and role-relevant events needed by the UI.
-- [ ] Expose history through a same-origin frontend API.
-- [ ] Show indexer health and last indexed block.
-- [ ] Codegen, typecheck, lint, and handler tests pass.
-- [ ] Indexed events reconcile with explorer receipts.
+- [ ] Query only the configured Base V4 contract through a same-origin activity API.
+- [ ] Read from the manifest deployment block to one pinned confirmed end block, chunking `eth_getLogs` ranges when required by the RPC provider.
+- [ ] Decode Deposit, Withdraw, Invested, Divested, pause, and role-relevant events needed by the UI.
+- [ ] Preserve event-specific caller, owner, receiver, strategy, assets, shares, and requested/actual amounts.
+- [ ] Derive operator actors from `transaction.from` through transaction/receipt enrichment instead of treating the token or strategy address as the actor.
+- [ ] Return the queried block range and explicit complete, partial, or failed status; never turn RPC failure into an empty-history result.
+- [ ] Reconcile decoded activity with transaction receipts and explorer evidence in tests.
+- [ ] Activity API tests plus frontend typecheck, lint, and build pass without Ponder or an application database.
 
 ## Stage 5.6 — Minimum Vault Evidence Explainer
 
@@ -211,7 +212,7 @@ Stage 5 keeps:
 
 ## Stage 5.7 — Release and Hiring Package
 
-- [ ] CI blocks on Foundry, frontend, Ponder, and explainer gates.
+- [ ] CI blocks on Foundry, frontend, activity-history, and explainer gates.
 - [ ] Browser E2E covers one depositor and one operator lifecycle.
 - [ ] README accurately describes product, trust assumptions, current deployment, and limitations.
 - [ ] Publish architecture, threat model, V3-to-V4 postmortem, and release evidence.
@@ -230,6 +231,7 @@ Stage 5 keeps:
 - Automatic divestment during user withdrawal.
 - Upgradeability and V3 user migration.
 - Autonomous AI, recommendations, transaction construction, alerts, memory, and HITL.
+- Ponder and database-backed activity indexing; reconsider only when event volume, multiple vaults, multi-chain history, or analytics require a persistent read model.
 - Permit/gasless deposits and an ERC-4626 slippage router.
 - Public TVL, production SLA, external audit, formal verification, bug bounty, token, and DAO.
 
@@ -238,10 +240,10 @@ Stage 5 keeps:
 Stage 5 is complete only when:
 
 - One verified Base V4 canary matches the committed manifest and source.
-- All deterministic, fuzz, invariant, fork, frontend, indexer, AI, and E2E release gates are green.
+- All deterministic, fuzz, invariant, fork, frontend, activity-history, AI, and E2E release gates are green.
 - No known Critical or High accounting, authorization, or funds-at-risk defect remains.
 - The product works without an AI provider and the explainer cannot influence financial writes.
-- Every public claim is supported by a contract, receipt, indexed event, or reproducible test artifact.
+- Every public claim is supported by a contract, confirmed log or receipt, or reproducible test artifact.
 - Murphy can explain the accounting invariants, strategy trust boundary, SIWE identity boundary, and LLM authority boundary without relying on an AI transcript.
 
 ## Implementation Handoff Format

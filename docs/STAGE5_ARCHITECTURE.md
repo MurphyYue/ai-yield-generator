@@ -40,7 +40,7 @@ Next.js + wagmi/viem + SIWE
                            |
                            +--> Base Aave V3 Pool / aUSDC
 
-Base event logs --> Ponder --> same-origin activity API --> UI
+Base event logs + receipts --> same-origin RPC activity API --> UI
 ```
 
 ## Chain and Asset Model
@@ -105,7 +105,7 @@ Role administration, cap changes, strategy configuration through the zero-assets
 
 ### ERC-4626 event actors
 
-For `Deposit(sender, owner, assets, shares)`, `sender` is the asset payer/caller and `owner` is the share receiver. For `Withdraw(sender, receiver, owner, assets, shares)`, `sender` is the direct caller, `receiver` receives the assets, and `owner` owns the burned shares. Tests separate all of these actors and bind returned values to the immediate pre-call preview. Ponder must preserve these fields instead of collapsing them into a generic user.
+For `Deposit(sender, owner, assets, shares)`, `sender` is the asset payer/caller and `owner` is the share receiver. For `Withdraw(sender, receiver, owner, assets, shares)`, `sender` is the direct caller, `receiver` receives the assets, and `owner` owns the burned shares. Tests separate all of these actors and bind returned values to the immediate pre-call preview. The activity API must preserve these fields instead of collapsing them into a generic user.
 
 ### Asset, share, and rounding units
 
@@ -118,7 +118,7 @@ The virtual offset makes donation manipulation expensive, but economics alone is
 
 Stage 5 does not impose a fixed on-chain minimum because a fixed asset amount cannot guarantee a nonzero share result at every exchange rate. The Console operational minimum is 1 USDC. Within the 50-USDC canary domain, let pre-deposit assets be `A <= 49e6`, raw shares be `S`, virtual shares be `M = 1e6`, and the victim deposit be `u >= 1e6`. If `q = floor(u(S + M) / (A + 1))` and `e = u(S + M) - q(A + 1)`, the victim's immediate round-trip loss is `ceil(e / (S + M + q))`. Here `e <= 49e6` and `S + M + q >= 1,020,408`, so the loss is at most 49 raw USDC units (`0.000049 USDC`). The implementation test found no violation over 10,000 fuzzed one-depositor/donation/deposit states. This is a scoped canary bound, not a universal ERC-4626 guarantee.
 
-The attacker-profit fuzz domain is deliberately narrower than a general economic proof: one attacker seeds `1` raw unit through 10,000 USDC, makes one direct donation from `1` raw unit through 100,000 USDC, and is followed by one victim depositing `1` raw unit through 100,000 USDC. Across 10,000 generated cases, no positive attacker return was observed when the attacker redeemed either before or after the victim. Multi-victim, partial, interleaved, and MEV sequences still require the later stateful invariant work.
+The attacker-profit fuzz domain is deliberately narrower than a general economic proof: one attacker seeds `1` raw unit through 10,000 USDC, makes one direct donation from `1` raw unit through 100,000 USDC, and is followed by one victim depositing `1` raw unit through 100,000 USDC. Across 10,000 generated cases, no positive attacker return was observed when the attacker redeemed either before or after the victim. The later stateful suite adds multi-user conservation under donations, yield, loss, and interleaved Vault operations; it does not convert this bounded result into a universal multi-victim or MEV-profit proof.
 
 ### Why conversions and aggregate claims cannot create assets
 
@@ -129,6 +129,28 @@ The same bound survives an immediate state-changing round trip. A deposit mints 
 For an exhaustive set of `n` holder balances `s_i` whose sum is `S`, `sum(floor(s_i Y / P)) <= floor(SY / P)`. The partition-rounding gap between those two values is at most `n - 1` raw asset units, so the four-holder implementation test allows at most 3 raw units of aggregate underclaim and no overclaim. Because `P = S + M` and `M > 0`, `SY / P < Y = A + 1`, so the whole-supply claim and the sum of individual claims are both at most `A`. The separate gap between `A` and the whole-supply claim can be larger because of the virtual terms. Neither gap permits an overclaim. This is a solvency statement, not a liquidity promise: `maxWithdraw` and `maxRedeem` can be lower while assets remain invested.
 
 The implementation exercises all five properties over 10,000 generated cases each, including seeded and donated exchange rates, actual deposit/mint followed by redeem, four exhaustive holders, share transfer, donation, and simulated loss. The derivation establishes the rounding direction; fuzzing checks that the deployed code paths implement it over the recorded domains.
+
+### Stateful accounting model
+
+The Stage 5 invariant handler drives four fixed users through deposit, mint, withdraw, redeem, share transfer, direct Vault and strategy donations, backed yield, aToken loss, invest, and divest. It uses the real `VaultV4` and `AaveStrategy` contracts with local Aave mocks, and targets only those ten state-changing handler selectors. Empty actions return before calling the system; `fail_on_revert = true` prevents an unexpected contract revert from being silently discarded. A deterministic reachability test executes every transition, including both donation destinations, at least once.
+
+The handler maintains accounting state independently from the Vault's reported totals:
+
+```text
+current managed assets + user exits + simulated aToken loss
+= initial managed assets + user entries + Vault donations
+  + strategy donations + backed yield
+
+current share supply + burned shares
+= initial share supply + minted shares
+
+mock pool USDC backing
+= current aToken supply + cumulative simulated aToken loss
+```
+
+At every generated state, the suite also checks that all shares belong to the four tracked users; their floor-rounded claims do not exceed the whole-supply claim or `totalAssets()`; `maxWithdraw` and `maxRedeem` match the declared idle-liquidity policy; all known holders conserve the fixed mock-USDC supply; and the Vault, strategy, pool, asset, and aToken bindings remain unchanged.
+
+The normal profile runs 256 campaigns of 64 actions for each of seven invariants. A release-strength run of 1,000 campaigns by 100 actions produced 700,000 handler invocations with zero reverts or discards. These results are randomized evidence for the closed local model, not formal verification. Early-returned empty actions count as selector invocations, live Aave behavior still requires pinned forks, and dishonest/reentrant adapters remain covered by separate adversarial unit tests and the T-04 trust boundary.
 
 Direct ERC-4626 `deposit` has no `minShares` argument. A transaction can therefore face exchange-rate movement between simulation and mining even though zero-share deposits are rejected. An atomic slippage router or `depositWithMinShares` is deferred and remains a disclosed production limitation.
 
@@ -185,7 +207,7 @@ The Base canary may initially use one operator-controlled account for multiple r
 - Every write is simulated before wallet submission.
 - The user wallet signs every user action.
 - An authorized operator wallet signs every invest/divest action.
-- Transaction state is shown as preparing, awaiting signature, submitted, confirmed, indexed, or failed.
+- Transaction state is shown as preparing, awaiting signature, submitted, confirmed, or failed. Confirmed activity is a separate read view, not another transaction-finality state.
 - AI output cannot populate write arguments or call a write hook.
 
 ## AI Authority Boundary
@@ -208,15 +230,17 @@ validated request
 
 The model has no write client, tools, memory, checkpoint, alerts, transaction intent, or autonomous action. Exact values and links are rendered from deterministic evidence beside the prose.
 
-## Data Boundary
+## Activity Evidence Boundary
 
-Ponder is a derived read model, not the accounting source of truth.
+Stage 5 activity history does not require Ponder or an indexer database. One low-volume Base canary does not justify operating a persistent indexer before the product needs multi-vault, multi-chain, aggregate analytics, or higher event volume. This decision does not remove storage needed by separate concerns such as SIWE session revocation.
 
-- Contracts and receipts determine financial truth.
-- Ponder provides activity/history convenience.
-- Indexer lag must be visible.
-- Indexer failure must not change vault balances or block core deposit/withdraw behavior.
-- AI position accounting reads the contract at a pinned block rather than trusting indexed aggregates.
+- Contract state, confirmed logs, and receipts determine financial truth.
+- A same-origin API queries only the manifest-configured V4 address from its deployment block to one pinned confirmed end block.
+- The API chunks `eth_getLogs` ranges for provider limits and returns the exact queried range plus complete, partial, or failed status.
+- Operator activity is attributed from `transaction.from`, which requires transaction/receipt enrichment; the token or strategy address is never treated as the actor.
+- RPC failure or truncation must not be rendered as an authoritative empty history.
+- Activity-history failure must not change vault balances or block core deposit/withdraw behavior.
+- AI position accounting reads the contract at a pinned block rather than trusting historical aggregates.
 
 ## Deployment and Release Boundary
 
@@ -224,11 +248,11 @@ Ponder is a derived read model, not the accounting source of truth.
 - A live broadcast requires separate explicit user approval.
 - The canary is verified before the frontend uses its address.
 - The canary uses a conservative cap and personal funds only.
-- `v0.5.0` is created only after the contract, frontend, indexer, AI, and browser release gates pass.
+- `v0.5.0` is created only after the contract, frontend, activity-history, AI, and browser release gates pass.
 - The release must state: "Portfolio canary; not audited; not for production funds."
 
 ## Superseded Architecture
 
-The Stage 4 yield recommendation, cross-chain migration, LI.FI, alert, long-term memory, routing-subgraph, and HITL architecture is historical. It must not remain callable or visible in the Stage 5 release.
+The Stage 4 yield recommendation, cross-chain migration, LI.FI, alert, long-term memory, routing-subgraph, HITL, and Ponder runtime architecture is historical. It must not remain callable or visible in the Stage 5 release.
 
 Its history is preserved by the `stage-4` branch and `stage-4-snapshot-2026-08-30` tag.

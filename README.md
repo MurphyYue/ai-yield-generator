@@ -36,7 +36,7 @@ VaultV4 (ERC-4626 USDC)
    v
 AaveStrategy -> Base Aave V3 / aUSDC
 
-Base logs -> Ponder -> same-origin activity API -> UI
+Base logs + receipts -> same-origin RPC activity API -> UI
 ```
 
 The Stage 5 runtime target is Base-only. Arbitrum will be retained only as a pinned V4 fork compatibility gate after the fork-suite rewrite.
@@ -70,7 +70,7 @@ contracts/          Solidity vault, strategy, interfaces, and mocks
 test/               Foundry unit and fork tests
 script/             Deployment and verification scripts
 frontend/           Next.js product and read-only explainer
-ponder-indexing/    Base VaultV4 event indexer
+ponder-indexing/    Preserved Stage 4 indexer source; not a Stage 5 runtime dependency
 docs/               Stage 5 architecture, threat model, and protocol context
 summary-report/     Historical mission reports and V3/V4 analysis
 todo.md             Active Stage 5 implementation and release gates
@@ -86,7 +86,7 @@ At the start of Stage 5:
 - One failure is a test-authority error that does not reach the intended slippage assertion.
 - Existing Base and Arbitrum fork suites instantiate V3 and must be rewritten for V4.
 - Frontend TypeScript passes; lint and clean-build runtime errors remain.
-- Ponder is preserved in the monorepo but remains V3-specific until its Stage 5 rewrite.
+- Ponder is preserved in the monorepo as Stage 4 history. Stage 5 deliberately uses bounded direct RPC history instead of deploying an indexer or activity-history database.
 
 After the contract-only Lean V4 policy-removal slice on `fix/v4-accounting`:
 
@@ -95,7 +95,7 @@ After the contract-only Lean V4 policy-removal slice on `fix/v4-accounting`:
 - The deleted policy tests account for the lower test count; fewer tests are not evidence of greater safety.
 - The slippage-authority regression now reaches and passes the intended operator path.
 - The donation/zero-share defect remains deliberately failing until its accounting policy is implemented.
-- Frontend and indexer integration still use legacy V3/policy surfaces, so this branch is not deployable.
+- Frontend runtime integration still uses legacy V3/policy/Ponder surfaces, so this branch is not deployable.
 
 After the fail-closed deposit-cap slice:
 
@@ -111,7 +111,7 @@ After the offset-6 donation-safety slice:
 - The historical 1-unit seed / 1,000-USDC donation / 100-USDC victim sequence is an exact regression.
 - No profitable single-victim donation attack was observed across 10,000 documented-domain fuzz cases in either exit order.
 - The at-least-1-USDC canary rounding bound passes 10,000 fuzzed seed/donation/deposit states.
-- Shares now use 12 decimals; frontend and indexer formatting remain deliberately blocked for their integration slices.
+- Shares now use 12 decimals; frontend formatting remains deliberately blocked for its integration slice.
 
 After the round-trip and aggregate-claims accounting slice:
 
@@ -137,7 +137,7 @@ After the fail-closed strategy-lifecycle slice on `fix/v4-strategy`:
 - No strategy-principal ledger remains. Strategy assets come from idle underlying plus the live aToken balance.
 - Vault-observed token balance deltas are authoritative for invest, divest, and emergency outcomes.
 - Emergency recovery is idle-first and best-effort. Its status boolean does not prove complete recovery; residual assets require a fresh strategy read and block replacement when nonzero or unreadable.
-- V4 pinned-fork proof, deployment tooling, frontend ABI, and indexer integration remain incomplete, so this branch is not deployable.
+- V4 pinned-fork proof, deployment tooling, frontend ABI, and direct activity-history integration remain incomplete, so this branch is not deployable.
 
 After the ERC-4626 operational-consistency slice on `test/v4-consistency`:
 
@@ -147,6 +147,15 @@ After the ERC-4626 operational-consistency slice on `test/v4-consistency`:
 - Pausing now blocks deposit, mint, withdraw, redeem, invest, divest, and every share transfer—including zero-value `transfer` and `transferFrom`—with `Pausable.EnforcedPause`.
 - ERC-4626 previews remain policy-agnostic conversion quotes while paused; all four `max*` limits report zero.
 - Admin emergency recovery remains callable while paused and does not unpause the Vault.
+
+After the multi-user stateful-invariant slice on `test/v4-invariants`:
+
+- The invariant suite has seven accounting/configuration properties plus one deterministic handler-reachability test, all passing.
+- The full non-fork repository suite has 172 passing tests and zero failures.
+- Normal runs execute 256 campaigns of 64 actions per invariant (114,688 total handler invocations); the release-strength run executed 1,000 campaigns of 100 actions per invariant (700,000 total), with zero reverts or discards.
+- Four tracked users exercise deposit, mint, withdraw, redeem, share transfer, Vault and strategy donations, backed Aave yield, simulated aToken loss, invest, and divest through the full `VaultV4 -> AaveStrategy -> MockAavePool` path.
+- Independent ghost state checks managed-asset flow, share mint/burn flow, mock-pool backing, exhaustive holder claims, exact idle-liquidity limits, and physical USDC conservation.
+- This is randomized evidence over a bounded local model, not formal verification, a generalized MEV-profit proof, or validation of live Aave behavior; pinned fork tests remain a separate release gate.
 
 No Stage 5 release claim is valid until the gates in [`todo.md`](./todo.md) pass.
 
@@ -172,15 +181,9 @@ npm run lint
 npm run build
 ```
 
-### Indexer
+### Historical Ponder prototype
 
-```bash
-cd ponder-indexing
-pnpm install
-pnpm codegen
-pnpm typecheck
-pnpm lint
-```
+`ponder-indexing/` is retained as Stage 4 source history. It is not installed, deployed, or included in Stage 5 release gates.
 
 ## Security and Trust
 

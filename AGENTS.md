@@ -24,7 +24,7 @@ Murphy is a 10-year frontend engineer transitioning to Web3. This project is his
 - `frontend/components/` — React components (AIPanel, AdminPanel, TransactionCard, etc.)
 - `frontend/hooks/` — Custom hooks (useVault, usePermitSignature)
 - `frontend/lib/` — Config (wagmi, vault, aave, chains)
-- `ponder-indexing/` — Ponder event indexer
+- `ponder-indexing/` — Preserved Stage 4 Ponder source; not a Stage 5 runtime dependency
 - `docs/` — Knowledge base documents for Dify
 - `summary-report/` — Day-by-day completion reports
 
