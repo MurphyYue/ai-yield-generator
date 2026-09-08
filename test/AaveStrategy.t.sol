@@ -483,30 +483,48 @@ contract AaveStrategyTest is Test {
         assertLt(vault.previewRedeem(userShares), claimBefore);
     }
 
-    function testATokenLossIsAllocatedProportionallyAcrossTwoHolders() public {
+    function testATokenLossIsAllocatedProportionallyAcrossTwoUnequalHolders() public {
         address secondUser = makeAddr("second user");
         assertTrue(usdc.transfer(secondUser, USER_BALANCE));
         vm.prank(secondUser);
         usdc.approve(address(vault), type(uint256).max);
 
-        _deposit(DEPOSIT_AMOUNT);
+        uint256 firstDeposit = 1_000 * UNIT;
+        uint256 secondDeposit = 2_000 * UNIT;
+        uint256 loss = 300 * UNIT;
+
+        _deposit(firstDeposit);
         vm.prank(secondUser);
-        vault.deposit(DEPOSIT_AMOUNT, secondUser);
-        _invest(2 * INVEST_AMOUNT);
+        vault.deposit(secondDeposit, secondUser);
+        _invest(firstDeposit + secondDeposit);
 
         uint256 firstShares = vault.balanceOf(user);
         uint256 secondShares = vault.balanceOf(secondUser);
+        uint256 supplyBefore = vault.totalSupply();
         uint256 firstClaimBefore = vault.previewRedeem(firstShares);
         uint256 secondClaimBefore = vault.previewRedeem(secondShares);
 
-        pool.applyATokenLoss(address(usdc), address(strategy), 300 * UNIT);
+        assertEq(secondShares, 2 * firstShares);
+        assertEq(firstClaimBefore, firstDeposit);
+        assertEq(secondClaimBefore, secondDeposit);
+
+        pool.applyATokenLoss(address(usdc), address(strategy), loss);
 
         uint256 firstClaimAfter = vault.previewRedeem(firstShares);
         uint256 secondClaimAfter = vault.previewRedeem(secondShares);
-        assertEq(firstShares, secondShares);
-        assertEq(firstClaimBefore, secondClaimBefore);
-        assertEq(firstClaimAfter, secondClaimAfter);
-        assertLt(firstClaimAfter, firstClaimBefore);
+        uint256 firstLoss = firstClaimBefore - firstClaimAfter;
+        uint256 secondLoss = secondClaimBefore - secondClaimAfter;
+
+        assertEq(strategy.totalAssets(), 2_700 * UNIT);
+        assertEq(vault.totalAssets(), 2_700 * UNIT);
+        assertEq(firstClaimAfter, 900 * UNIT);
+        assertEq(secondClaimAfter, 1_800 * UNIT);
+        assertEq(firstLoss, 100 * UNIT);
+        assertEq(secondLoss, 200 * UNIT);
+        assertEq(secondLoss, 2 * firstLoss);
+        assertEq(vault.balanceOf(user), firstShares);
+        assertEq(vault.balanceOf(secondUser), secondShares);
+        assertEq(vault.totalSupply(), supplyBefore);
     }
 
     function testDivestReturnsExactRequestedAmount() public {
