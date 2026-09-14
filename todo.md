@@ -4,7 +4,7 @@
 
 **Release/base branch:** `stage-5`
 
-**Current work branch:** `test/v4-invariants`
+**Current work branch:** `test/v4-rounding`
 
 **Target release:** `v0.5.0`
 
@@ -99,7 +99,7 @@ The Ponder migration used a verified temporary bundle and annotated nested tag. 
 ## Stage 5.2 — Contract Evidence
 
 - [x] Exact-value unit and regression tests are green.
-- [ ] Fuzz tests cover deposit/mint/withdraw/redeem rounding boundaries.
+- [x] Fuzz tests cover the exact adjacent deposit/mint/withdraw/redeem rounding boundaries over seeded and donated exchange rates.
 - [x] Stateful invariants cover multiple users, donations, yield, loss, invest, and divest.
 - [x] Strategy failure, slippage, loss, emergency recovery, and replacement tests are green.
 - [ ] Base fork tests instantiate V4 and use a pinned block.

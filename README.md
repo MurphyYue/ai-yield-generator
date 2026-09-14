@@ -157,6 +157,13 @@ After the multi-user stateful-invariant slice on `test/v4-invariants`:
 - Independent ghost state checks managed-asset flow, share mint/burn flow, mock-pool backing, exhaustive holder claims, exact idle-liquidity limits, and physical USDC conservation.
 - This is randomized evidence over a bounded local model, not formal verification, a generalized MEV-profit proof, or validation of live Aave behavior; pinned fork tests remain a separate release gate.
 
+After the four-operation rounding-boundary slice on `test/v4-rounding`:
+
+- The accounting-property suite has 10 passing tests, and the full non-fork repository suite has 176 passing tests with zero failures.
+- Deposit and redeem are checked as exact floor boundaries; mint and withdraw are checked as exact ceiling boundaries.
+- Each property proves the adjacent inverse inequality, executes the operation, and reconciles the exact user, Vault, `totalAssets()`, and `totalSupply()` deltas.
+- All four new properties pass 10,000 seeded-and-donated exchange-rate cases without approximate tolerances.
+
 No Stage 5 release claim is valid until the gates in [`todo.md`](./todo.md) pass.
 
 ## Development Commands

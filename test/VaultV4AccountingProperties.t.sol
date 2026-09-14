@@ -90,6 +90,114 @@ contract VaultV4AccountingPropertiesTest is Test {
         assertLe(roundTripShares, shares);
     }
 
+    function testFuzzDepositUsesGreatestSharesCoveredByAssets(
+        uint96 seedInput,
+        uint96 donationInput,
+        uint96 assetsInput
+    ) public {
+        _prepareOrdinaryRate(seedInput, donationInput);
+        uint256 assets = bound(uint256(assetsInput), 1, 100_000 * ASSET_UNIT);
+        uint256 expectedShares = vault.previewDeposit(assets);
+        assertGt(expectedShares, 0);
+
+        assertLe(vault.previewMint(expectedShares), assets);
+        assertGt(vault.previewMint(expectedShares + 1), assets);
+
+        uint256 actorAssetsBefore = usdc.balanceOf(actor);
+        uint256 actorSharesBefore = vault.balanceOf(actor);
+        uint256 managedAssetsBefore = vault.totalAssets();
+        uint256 supplyBefore = vault.totalSupply();
+
+        uint256 mintedShares = _depositAs(actor, assets);
+
+        assertEq(mintedShares, expectedShares);
+        assertEq(usdc.balanceOf(actor) + assets, actorAssetsBefore);
+        assertEq(vault.balanceOf(actor), actorSharesBefore + expectedShares);
+        assertEq(vault.totalAssets(), managedAssetsBefore + assets);
+        assertEq(vault.totalSupply(), supplyBefore + expectedShares);
+    }
+
+    function testFuzzMintUsesLeastAssetsCoveringShares(uint96 seedInput, uint96 donationInput, uint96 sharesInput)
+        public
+    {
+        _prepareOrdinaryRate(seedInput, donationInput);
+        uint256 affordableShares = vault.convertToShares(usdc.balanceOf(actor));
+        assertGt(affordableShares, 0);
+        uint256 shares = bound(uint256(sharesInput), 1, affordableShares);
+        uint256 expectedAssets = vault.previewMint(shares);
+        assertGt(expectedAssets, 0);
+
+        assertGe(vault.previewDeposit(expectedAssets), shares);
+        assertLt(vault.previewDeposit(expectedAssets - 1), shares);
+
+        uint256 actorAssetsBefore = usdc.balanceOf(actor);
+        uint256 actorSharesBefore = vault.balanceOf(actor);
+        uint256 managedAssetsBefore = vault.totalAssets();
+        uint256 supplyBefore = vault.totalSupply();
+
+        vm.prank(actor);
+        uint256 chargedAssets = vault.mint(shares, actor);
+
+        assertEq(chargedAssets, expectedAssets);
+        assertEq(usdc.balanceOf(actor) + expectedAssets, actorAssetsBefore);
+        assertEq(vault.balanceOf(actor), actorSharesBefore + shares);
+        assertEq(vault.totalAssets(), managedAssetsBefore + expectedAssets);
+        assertEq(vault.totalSupply(), supplyBefore + shares);
+    }
+
+    function testFuzzWithdrawUsesLeastSharesCoveringAssets(uint96 seedInput, uint96 donationInput, uint96 assetsInput)
+        public
+    {
+        _prepareOrdinaryRate(seedInput, donationInput);
+        uint256 maxAssets = vault.maxWithdraw(incumbent);
+        assertGt(maxAssets, 0);
+        uint256 assets = bound(uint256(assetsInput), 1, maxAssets);
+        uint256 expectedShares = vault.previewWithdraw(assets);
+        assertGt(expectedShares, 0);
+
+        assertGe(vault.previewRedeem(expectedShares), assets);
+        assertLt(vault.previewRedeem(expectedShares - 1), assets);
+
+        uint256 ownerAssetsBefore = usdc.balanceOf(incumbent);
+        uint256 ownerSharesBefore = vault.balanceOf(incumbent);
+        uint256 managedAssetsBefore = vault.totalAssets();
+        uint256 supplyBefore = vault.totalSupply();
+
+        vm.prank(incumbent);
+        uint256 burnedShares = vault.withdraw(assets, incumbent, incumbent);
+
+        assertEq(burnedShares, expectedShares);
+        assertEq(usdc.balanceOf(incumbent), ownerAssetsBefore + assets);
+        assertEq(vault.balanceOf(incumbent) + expectedShares, ownerSharesBefore);
+        assertEq(vault.totalAssets() + assets, managedAssetsBefore);
+        assertEq(vault.totalSupply() + expectedShares, supplyBefore);
+    }
+
+    function testFuzzRedeemUsesGreatestAssetsCoveredByShares(uint96 seedInput, uint96 donationInput, uint96 sharesInput)
+        public
+    {
+        _prepareOrdinaryRate(seedInput, donationInput);
+        uint256 ownerSharesBefore = vault.balanceOf(incumbent);
+        uint256 shares = bound(uint256(sharesInput), 1, ownerSharesBefore);
+        uint256 expectedAssets = vault.previewRedeem(shares);
+
+        assertLe(vault.previewWithdraw(expectedAssets), shares);
+        assertGt(vault.previewWithdraw(expectedAssets + 1), shares);
+
+        uint256 ownerAssetsBefore = usdc.balanceOf(incumbent);
+        uint256 managedAssetsBefore = vault.totalAssets();
+        uint256 supplyBefore = vault.totalSupply();
+
+        vm.prank(incumbent);
+        uint256 returnedAssets = vault.redeem(shares, incumbent, incumbent);
+
+        assertEq(returnedAssets, expectedAssets);
+        assertEq(usdc.balanceOf(incumbent), ownerAssetsBefore + expectedAssets);
+        assertEq(vault.balanceOf(incumbent) + shares, ownerSharesBefore);
+        assertEq(vault.totalAssets() + expectedAssets, managedAssetsBefore);
+        assertEq(vault.totalSupply() + shares, supplyBefore);
+    }
+
     function testFuzzActualDepositRedeemRoundTripNeverProfits(
         uint96 seedInput,
         uint96 donationInput,
