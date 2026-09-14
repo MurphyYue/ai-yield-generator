@@ -50,7 +50,7 @@ contract VaultV3 is AccessControl, Pausable, ReentrancyGuard {
     event Withdrawn(address indexed user, uint256 amount, uint256 fee);
     event TokenDeposited(address indexed user, address indexed token, uint256 amount);
     event TokenWithdrawn(address indexed user, address indexed token, uint256 amount);
-    // Paused/Unpaused events are inherited from Pausable, don't redefine 
+    // Paused/Unpaused events are inherited from Pausable, don't redefine
     event Blacklisted(address indexed account, bool indexed status);
     event LargeWithdrawalRequested(address indexed user, uint256 amount, bytes32 indexed requestHash);
     event LargeWithdrawalApproved(address indexed user, bytes32 indexed requestHash);
@@ -140,11 +140,10 @@ contract VaultV3 is AccessControl, Pausable, ReentrancyGuard {
     /// @param user Address requesting withdrawal
     /// @param amount Amount to withdraw
     /// @param requestHash Unique hash identifying the withdrawal request
-    function approveLargeWithdrawal(
-        address user,
-        uint256 amount,
-        bytes32 requestHash
-    ) external onlyRole(TREASURER_ROLE) {
+    function approveLargeWithdrawal(address user, uint256 amount, bytes32 requestHash)
+        external
+        onlyRole(TREASURER_ROLE)
+    {
         largeWithdrawalApproved[requestHash] = true;
         emit LargeWithdrawalApproved(user, requestHash);
     }
@@ -280,7 +279,7 @@ contract VaultV3 is AccessControl, Pausable, ReentrancyGuard {
         uint256 amountAfterFee = _amount - fee;
         balances[msg.sender] -= _amount;
 
-        (bool success, ) = msg.sender.call{value: amountAfterFee}("");
+        (bool success,) = msg.sender.call{value: amountAfterFee}("");
         require(success, "Transfer failed");
 
         emit Withdrawn(msg.sender, amountAfterFee, fee);

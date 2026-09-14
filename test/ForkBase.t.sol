@@ -29,11 +29,7 @@ interface IBaseAavePool {
 }
 
 contract RevertingPool {
-    function getReserveData(address)
-        external
-        pure
-        returns (IBaseAavePool.ReserveData memory)
-    {
+    function getReserveData(address) external pure returns (IBaseAavePool.ReserveData memory) {
         revert("bad pool");
     }
 

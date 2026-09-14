@@ -10,11 +10,7 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 contract MockERC20 is ERC20, ERC20Permit, Ownable {
     /// @notice Constructor mints initial supply to deployer and initializes Permit
     /// @param initialSupply The amount of tokens to mint to deployer
-    constructor(uint256 initialSupply)
-        ERC20("Mock USDT", "USDT")
-        ERC20Permit("Mock USDT")
-        Ownable(msg.sender)
-    {
+    constructor(uint256 initialSupply) ERC20("Mock USDT", "USDT") ERC20Permit("Mock USDT") Ownable(msg.sender) {
         _mint(msg.sender, initialSupply);
     }
 

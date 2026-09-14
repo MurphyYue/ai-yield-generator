@@ -105,7 +105,7 @@ The Ponder migration used a verified temporary bundle and annotated nested tag. 
 - [ ] Base fork tests instantiate V4 and use a pinned block.
 - [ ] Arbitrum fork tests instantiate V4 and use a pinned block.
 - [ ] Fork tests validate expected pool, USDC, and aToken code/configuration.
-- [ ] `forge fmt --check` passes.
+- [x] `forge fmt --check` passes.
 - [x] Slither has no untriaged High or Medium findings.
 - [x] Manual threat-model review is recorded.
 - [x] No known Critical or High contract defect remains.

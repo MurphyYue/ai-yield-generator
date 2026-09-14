@@ -28,11 +28,11 @@ contract VaultV3PermitTest is Test {
         user1 = makeAddr("user1");
 
         // Deploy contracts
-        usdt = new MockERC20(1000000 * 10**6); // 1M USDT
+        usdt = new MockERC20(1000000 * 10 ** 6); // 1M USDT
         vault = new VaultV3();
 
         // Give owner some USDT
-        usdt.transfer(owner, 10000 * 10**6); // 10,000 USDT
+        usdt.transfer(owner, 10000 * 10 ** 6); // 10,000 USDT
     }
 
     /// @dev Helper: Create EIP-2612 permit signature
@@ -60,21 +60,10 @@ contract VaultV3PermitTest is Test {
         );
 
         // Build permit struct hash
-        bytes32 structHash = keccak256(
-            abi.encode(
-                PERMIT_TYPEHASH,
-                ownerAddr,
-                spender,
-                value,
-                nonce,
-                deadline
-            )
-        );
+        bytes32 structHash = keccak256(abi.encode(PERMIT_TYPEHASH, ownerAddr, spender, value, nonce, deadline));
 
         // Build digest
-        bytes32 digest = keccak256(
-            abi.encodePacked("\x19\x01", DOMAIN_SEPARATOR, structHash)
-        );
+        bytes32 digest = keccak256(abi.encodePacked("\x19\x01", DOMAIN_SEPARATOR, structHash));
 
         // Sign
         (v, r, s) = vm.sign(privateKey, digest);
@@ -85,38 +74,24 @@ contract VaultV3PermitTest is Test {
     // ============================================
 
     function test_PermitDeposit_Basic() public {
-        uint256 depositAmount = 1000 * 10**6; // 1,000 USDT
+        uint256 depositAmount = 1000 * 10 ** 6; // 1,000 USDT
         uint256 deadline = block.timestamp + 1 hours;
 
         // Create permit signature
-        (uint8 v, bytes32 r, bytes32 s) = createPermitSignature(
-            address(usdt),
-            owner,
-            address(vault),
-            depositAmount,
-            deadline,
-            ownerPrivateKey
-        );
+        (uint8 v, bytes32 r, bytes32 s) =
+            createPermitSignature(address(usdt), owner, address(vault), depositAmount, deadline, ownerPrivateKey);
 
         // Verify initial state
-        assertEq(usdt.balanceOf(owner), 10000 * 10**6, "Owner initial balance");
+        assertEq(usdt.balanceOf(owner), 10000 * 10 ** 6, "Owner initial balance");
         assertEq(usdt.allowance(owner, address(vault)), 0, "Initial allowance should be 0");
         assertEq(vault.getTokenBalance(address(usdt), owner), 0, "Initial vault balance");
 
         // Execute permit deposit as owner (one transaction!)
         vm.prank(owner);
-        vault.depositWithPermit(
-            address(usdt),
-            depositAmount,
-            owner,
-            deadline,
-            v,
-            r,
-            s
-        );
+        vault.depositWithPermit(address(usdt), depositAmount, owner, deadline, v, r, s);
 
         // Verify final state
-        assertEq(usdt.balanceOf(owner), 9000 * 10**6, "Owner balance after deposit");
+        assertEq(usdt.balanceOf(owner), 9000 * 10 ** 6, "Owner balance after deposit");
         assertEq(vault.getTokenBalance(address(usdt), owner), depositAmount, "Vault balance should increase");
         assertEq(usdt.allowance(owner, address(vault)), 0, "Allowance should be 0 (used up)");
     }
@@ -126,7 +101,7 @@ contract VaultV3PermitTest is Test {
     // ============================================
 
     function test_PermitDeposit_vsTraditionalFlow() public {
-        uint256 depositAmount = 500 * 10**6; // 500 USDT
+        uint256 depositAmount = 500 * 10 ** 6; // 500 USDT
 
         // Traditional flow (2 transactions)
         vm.prank(owner);
@@ -144,25 +119,11 @@ contract VaultV3PermitTest is Test {
 
         // Permit flow (1 transaction)
         uint256 deadline = block.timestamp + 1 hours;
-        (uint8 v, bytes32 r, bytes32 s) = createPermitSignature(
-            address(usdt),
-            owner,
-            address(vault),
-            depositAmount,
-            deadline,
-            ownerPrivateKey
-        );
+        (uint8 v, bytes32 r, bytes32 s) =
+            createPermitSignature(address(usdt), owner, address(vault), depositAmount, deadline, ownerPrivateKey);
 
         vm.prank(owner);
-        vault.depositWithPermit(
-            address(usdt),
-            depositAmount,
-            owner,
-            deadline,
-            v,
-            r,
-            s
-        );
+        vault.depositWithPermit(address(usdt), depositAmount, owner, deadline, v, r, s);
 
         assertEq(vault.getTokenBalance(address(usdt), owner), depositAmount, "Balance after permit deposit");
     }
@@ -172,7 +133,7 @@ contract VaultV3PermitTest is Test {
     // ============================================
 
     function test_PermitDeposit_GasComparison() public {
-        uint256 depositAmount = 1000 * 10**6;
+        uint256 depositAmount = 1000 * 10 ** 6;
 
         // Measure gas: Traditional flow
         uint256 gasStart = gasleft();
@@ -188,26 +149,12 @@ contract VaultV3PermitTest is Test {
 
         // Measure gas: Permit flow
         uint256 deadline = block.timestamp + 1 hours;
-        (uint8 v, bytes32 r, bytes32 s) = createPermitSignature(
-            address(usdt),
-            owner,
-            address(vault),
-            depositAmount,
-            deadline,
-            ownerPrivateKey
-        );
+        (uint8 v, bytes32 r, bytes32 s) =
+            createPermitSignature(address(usdt), owner, address(vault), depositAmount, deadline, ownerPrivateKey);
 
         gasStart = gasleft();
         vm.prank(owner);
-        vault.depositWithPermit(
-            address(usdt),
-            depositAmount,
-            owner,
-            deadline,
-            v,
-            r,
-            s
-        );
+        vault.depositWithPermit(address(usdt), depositAmount, owner, deadline, v, r, s);
         uint256 gasPermit = gasStart - gasleft();
 
         // Log comparison
@@ -225,29 +172,15 @@ contract VaultV3PermitTest is Test {
     // ============================================
 
     function test_PermitDeposit_RevertIf_ExpiredDeadline() public {
-        uint256 depositAmount = 1000 * 10**6;
+        uint256 depositAmount = 1000 * 10 ** 6;
         uint256 expiredDeadline = block.timestamp - 1; // Past deadline
 
-        (uint8 v, bytes32 r, bytes32 s) = createPermitSignature(
-            address(usdt),
-            owner,
-            address(vault),
-            depositAmount,
-            expiredDeadline,
-            ownerPrivateKey
-        );
+        (uint8 v, bytes32 r, bytes32 s) =
+            createPermitSignature(address(usdt), owner, address(vault), depositAmount, expiredDeadline, ownerPrivateKey);
 
         vm.prank(owner);
         vm.expectRevert("Permit expired");
-        vault.depositWithPermit(
-            address(usdt),
-            depositAmount,
-            owner,
-            expiredDeadline,
-            v,
-            r,
-            s
-        );
+        vault.depositWithPermit(address(usdt), depositAmount, owner, expiredDeadline, v, r, s);
     }
 
     // ============================================
@@ -255,33 +188,19 @@ contract VaultV3PermitTest is Test {
     // ============================================
 
     function test_PermitDeposit_RevertIf_InvalidSignature() public {
-        uint256 depositAmount = 1000 * 10**6;
+        uint256 depositAmount = 1000 * 10 ** 6;
         uint256 deadline = block.timestamp + 1 hours;
 
         // Create valid signature
-        (uint8 v, bytes32 r, bytes32 s) = createPermitSignature(
-            address(usdt),
-            owner,
-            address(vault),
-            depositAmount,
-            deadline,
-            ownerPrivateKey
-        );
+        (uint8 v, bytes32 r, bytes32 s) =
+            createPermitSignature(address(usdt), owner, address(vault), depositAmount, deadline, ownerPrivateKey);
 
         // Tamper with signature
         bytes32 tamperedR = bytes32(uint256(r) + 1);
 
         vm.prank(owner);
         vm.expectRevert(); // Should revert with ECDSA error
-        vault.depositWithPermit(
-            address(usdt),
-            depositAmount,
-            owner,
-            deadline,
-            v,
-            tamperedR,
-            s
-        );
+        vault.depositWithPermit(address(usdt), depositAmount, owner, deadline, v, tamperedR, s);
     }
 
     // ============================================
@@ -289,18 +208,12 @@ contract VaultV3PermitTest is Test {
     // ============================================
 
     function test_PermitDeposit_RevertIf_WrongOwner() public {
-        uint256 depositAmount = 1000 * 10**6;
+        uint256 depositAmount = 1000 * 10 ** 6;
         uint256 deadline = block.timestamp + 1 hours;
 
         // Sign with owner's key
-        (uint8 v, bytes32 r, bytes32 s) = createPermitSignature(
-            address(usdt),
-            owner,
-            address(vault),
-            depositAmount,
-            deadline,
-            ownerPrivateKey
-        );
+        (uint8 v, bytes32 r, bytes32 s) =
+            createPermitSignature(address(usdt), owner, address(vault), depositAmount, deadline, ownerPrivateKey);
 
         // Try to execute as different user (user1)
         vm.prank(user1);
@@ -317,7 +230,7 @@ contract VaultV3PermitTest is Test {
         );
 
         // Verify owner's balance decreased, not user1's
-        assertEq(usdt.balanceOf(owner), 9000 * 10**6, "Owner balance should decrease");
+        assertEq(usdt.balanceOf(owner), 9000 * 10 ** 6, "Owner balance should decrease");
         assertEq(vault.getTokenBalance(address(usdt), owner), depositAmount, "Vault should credit owner");
     }
 
@@ -332,29 +245,15 @@ contract VaultV3PermitTest is Test {
         vm.prank(manager);
         vault.blacklist(owner);
 
-        uint256 depositAmount = 1000 * 10**6;
+        uint256 depositAmount = 1000 * 10 ** 6;
         uint256 deadline = block.timestamp + 1 hours;
 
-        (uint8 v, bytes32 r, bytes32 s) = createPermitSignature(
-            address(usdt),
-            owner,
-            address(vault),
-            depositAmount,
-            deadline,
-            ownerPrivateKey
-        );
+        (uint8 v, bytes32 r, bytes32 s) =
+            createPermitSignature(address(usdt), owner, address(vault), depositAmount, deadline, ownerPrivateKey);
 
         vm.prank(owner);
         vm.expectRevert("Address is blacklisted");
-        vault.depositWithPermit(
-            address(usdt),
-            depositAmount,
-            owner,
-            deadline,
-            v,
-            r,
-            s
-        );
+        vault.depositWithPermit(address(usdt), depositAmount, owner, deadline, v, r, s);
     }
 
     // ============================================
@@ -368,29 +267,15 @@ contract VaultV3PermitTest is Test {
         vm.prank(manager);
         vault.pause();
 
-        uint256 depositAmount = 1000 * 10**6;
+        uint256 depositAmount = 1000 * 10 ** 6;
         uint256 deadline = block.timestamp + 1 hours;
 
-        (uint8 v, bytes32 r, bytes32 s) = createPermitSignature(
-            address(usdt),
-            owner,
-            address(vault),
-            depositAmount,
-            deadline,
-            ownerPrivateKey
-        );
+        (uint8 v, bytes32 r, bytes32 s) =
+            createPermitSignature(address(usdt), owner, address(vault), depositAmount, deadline, ownerPrivateKey);
 
         vm.prank(owner);
         vm.expectRevert(); // EnforcedPause error
-        vault.depositWithPermit(
-            address(usdt),
-            depositAmount,
-            owner,
-            deadline,
-            v,
-            r,
-            s
-        );
+        vault.depositWithPermit(address(usdt), depositAmount, owner, deadline, v, r, s);
     }
 
     // ============================================
@@ -398,29 +283,15 @@ contract VaultV3PermitTest is Test {
     // ============================================
 
     function test_PermitDeposit_MultipleDeposits() public {
-        uint256 depositAmount = 500 * 10**6;
+        uint256 depositAmount = 500 * 10 ** 6;
 
         for (uint256 i = 0; i < 3; i++) {
             uint256 deadline = block.timestamp + 1 hours;
-            (uint8 v, bytes32 r, bytes32 s) = createPermitSignature(
-                address(usdt),
-                owner,
-                address(vault),
-                depositAmount,
-                deadline,
-                ownerPrivateKey
-            );
+            (uint8 v, bytes32 r, bytes32 s) =
+                createPermitSignature(address(usdt), owner, address(vault), depositAmount, deadline, ownerPrivateKey);
 
             vm.prank(owner);
-            vault.depositWithPermit(
-                address(usdt),
-                depositAmount,
-                owner,
-                deadline,
-                v,
-                r,
-                s
-            );
+            vault.depositWithPermit(address(usdt), depositAmount, owner, deadline, v, r, s);
 
             // Verify nonce increased
             assertEq(usdt.nonces(owner), i + 1, "Nonce should increment");
@@ -436,51 +307,23 @@ contract VaultV3PermitTest is Test {
     function test_PermitDeposit_RevertIf_ZeroAmount() public {
         uint256 deadline = block.timestamp + 1 hours;
 
-        (uint8 v, bytes32 r, bytes32 s) = createPermitSignature(
-            address(usdt),
-            owner,
-            address(vault),
-            0,
-            deadline,
-            ownerPrivateKey
-        );
+        (uint8 v, bytes32 r, bytes32 s) =
+            createPermitSignature(address(usdt), owner, address(vault), 0, deadline, ownerPrivateKey);
 
         vm.prank(owner);
         vm.expectRevert("Amount must be > 0");
-        vault.depositWithPermit(
-            address(usdt),
-            0,
-            owner,
-            deadline,
-            v,
-            r,
-            s
-        );
+        vault.depositWithPermit(address(usdt), 0, owner, deadline, v, r, s);
     }
 
     function test_PermitDeposit_RevertIf_InsufficientBalance() public {
-        uint256 depositAmount = 20000 * 10**6; // More than owner has
+        uint256 depositAmount = 20000 * 10 ** 6; // More than owner has
         uint256 deadline = block.timestamp + 1 hours;
 
-        (uint8 v, bytes32 r, bytes32 s) = createPermitSignature(
-            address(usdt),
-            owner,
-            address(vault),
-            depositAmount,
-            deadline,
-            ownerPrivateKey
-        );
+        (uint8 v, bytes32 r, bytes32 s) =
+            createPermitSignature(address(usdt), owner, address(vault), depositAmount, deadline, ownerPrivateKey);
 
         vm.prank(owner);
         vm.expectRevert(); // ERC20: transfer amount exceeds balance
-        vault.depositWithPermit(
-            address(usdt),
-            depositAmount,
-            owner,
-            deadline,
-            v,
-            r,
-            s
-        );
+        vault.depositWithPermit(address(usdt), depositAmount, owner, deadline, v, r, s);
     }
 }

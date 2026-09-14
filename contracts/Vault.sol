@@ -41,7 +41,7 @@ contract Vault is Ownable, ReentrancyGuard {
 
         balances[msg.sender] -= _amount;
 
-        (bool success, ) = msg.sender.call{value: _amount}("");
+        (bool success,) = msg.sender.call{value: _amount}("");
         require(success, "Transfer failed");
 
         emit Withdrawn(msg.sender, _amount);

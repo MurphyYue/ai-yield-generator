@@ -29,11 +29,7 @@ interface IArbitrumAavePool {
 }
 
 contract ArbitrumRevertingPool {
-    function getReserveData(address)
-        external
-        pure
-        returns (IArbitrumAavePool.ReserveData memory)
-    {
+    function getReserveData(address) external pure returns (IArbitrumAavePool.ReserveData memory) {
         revert("bad pool");
     }
 
