@@ -4,13 +4,13 @@
 
 **Release/base branch:** `stage-5`
 
-**Current work branch:** `test/v4-rounding`
+**Current work branch:** `test/v4-forks`
 
 **Target release:** `v0.5.0`
 
 **Live target:** Base only
 
-**Fork evidence target:** Base and Arbitrum at pinned blocks
+**Fork evidence target:** Base at a pinned block; Arbitrum compatibility is deferred
 
 **Contract target:** `VaultV4`
 
@@ -23,7 +23,7 @@ Stage 5 is not a yield aggregator, optimizer, or cross-chain navigator.
 ## Release Rules
 
 - Base is the only runtime and deployment chain.
-- Arbitrum is fork-test evidence only.
+- Base is the only runtime and release evidence chain. Arbitrum compatibility is deferred.
 - The vault accepts Base native USDC only.
 - One Aave V3 strategy is supported.
 - The live deployment is a low-value, unaudited canary; it must not solicit public funds.
@@ -102,9 +102,9 @@ The Ponder migration used a verified temporary bundle and annotated nested tag. 
 - [x] Fuzz tests cover the exact adjacent deposit/mint/withdraw/redeem rounding boundaries over seeded and donated exchange rates.
 - [x] Stateful invariants cover multiple users, donations, yield, loss, invest, and divest.
 - [x] Strategy failure, slippage, loss, emergency recovery, and replacement tests are green.
-- [ ] Base fork tests instantiate V4 and use a pinned block.
-- [ ] Arbitrum fork tests instantiate V4 and use a pinned block.
-- [ ] Fork tests validate expected pool, USDC, and aToken code/configuration.
+- [x] Base fork tests instantiate V4 and use a pinned block (`51,246,242` on Base).
+- [ ] Arbitrum compatibility fork tests instantiate V4 and use a pinned block (deferred; no runtime support).
+- [x] Base fork tests validate expected pool, USDC, and aToken code/configuration.
 - [x] `forge fmt --check` passes.
 - [x] Slither has no untriaged High or Medium findings.
 - [x] Manual threat-model review is recorded.

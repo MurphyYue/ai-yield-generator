@@ -41,6 +41,8 @@ Base logs + receipts -> same-origin RPC activity API -> UI
 
 The Stage 5 runtime target is Base-only. Arbitrum will be retained only as a pinned V4 fork compatibility gate after the fork-suite rewrite.
 
+The Base fork evidence now deploys a fresh `VaultV4` and `AaveStrategy` at pinned block `51,246,242` on chain `8453`. It validates the live Base USDC reserve, Aave pool, and aUSDC bindings, then runs deposit, invest, divest, and redeem against the fork. Arbitrum remains deferred because it is not a Stage 5 runtime or deployment target.
+
 ## Lean VaultV4
 
 Stage 5 keeps:

@@ -55,10 +55,10 @@ test:
 	forge test -vvv
 
 test-fork-base:
-	forge test --match-path "test/ForkBase.t.sol" -vvv --fork-url $(BASE_RPC_URL)
+	forge test --match-path "test/ForkBase.t.sol" -vvv
 
 test-fork-arbitrum:
-	forge test --match-path "test/ForkArbitrum.t.sol" -vvv --fork-url $(ARBITRUM_RPC_URL)
+	forge test --match-path "test/ForkArbitrum.t.sol" -vvv
 
 # ─── Local Anvil deployment ───────────────────────────────────────────────────
 # Uses the well-known Anvil default key stored in the anvil_account keystore.
