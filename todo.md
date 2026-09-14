@@ -112,11 +112,11 @@ The Ponder migration used a verified temporary bundle and annotated nested tag. 
 
 ## Stage 5.3 — Base Deployment and Manifest
 
-- [ ] Deployment script rejects live chains other than Base `8453`.
-- [ ] Local and fork deployment paths are separate from live broadcast.
-- [ ] Deployment starts with a conservative cap and safe configuration.
-- [ ] Post-deployment script verifies asset, strategy, pool, aToken, roles, cap, pause state, and bytecode.
-- [ ] Exact deployment is dry-run on a pinned Base fork.
+- [x] Deployment script rejects live chains other than Base `8453`.
+- [x] Local and fork deployment paths are separate from live broadcast.
+- [x] Deployment starts paused with a conservative 50-USDC cap by default.
+- [x] Post-deployment script verifies asset, strategy, pool, aToken, roles, cap, pause state, and bytecode.
+- [x] Exact deployment is dry-run on a pinned Base fork.
 - [ ] Create `stage-5-rc.1` only after deterministic and fork gates pass.
 - [ ] Obtain explicit user approval immediately before live broadcast.
 - [ ] Deploy and verify a low-value Base canary.

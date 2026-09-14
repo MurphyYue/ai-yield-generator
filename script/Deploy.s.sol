@@ -2,91 +2,55 @@
 pragma solidity ^0.8.24;
 
 import "forge-std/Script.sol";
-import "forge-std/console.sol";
-import "../contracts/MockERC20.sol";
+import "forge-std/console2.sol";
 import "../contracts/VaultV4.sol";
 import "../contracts/AaveStrategy.sol";
+import "../contracts/MockERC20.sol";
 import "../contracts/mocks/MockAavePool.sol";
+import "../contracts/mocks/MockAToken.sol";
 
 contract DeployScript is Script {
-    uint256 constant CHAIN_ID_BASE = 8453;
-    uint256 constant CHAIN_ID_ARBITRUM = 42161;
-    uint256 constant CHAIN_ID_SEPOLIA = 11155111;
-
-    address constant AAVE_V3_POOL_BASE = 0xA238Dd80C259a72e81d7e4664a9801593F98d1c5;
-    address constant AAVE_V3_POOL_ARBITRUM = 0x794a61358D6845594F94dc1DB02A252b5b4814aD;
-    address constant AAVE_V3_POOL_SEPOLIA = 0x6Ae43d3271ff6888e7Fc43Fd7321a503ff738951;
-
-    address constant USDC_BASE = 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913;
-    address constant USDC_ARBITRUM = 0xaf88d065e77c8cC2239327C5EDb3A432268e5831;
+    uint256 internal constant BASE_CHAIN_ID = 8453;
+    uint256 internal constant ANVIL_CHAIN_ID = 31337;
+    uint256 internal constant DEFAULT_CANARY_CAP = 50e6;
+    address internal constant BASE_USDC = 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913;
+    address internal constant BASE_AAVE_POOL = 0xA238Dd80C259a72e81d7e4664a9801593F98d1c5;
 
     function run() external {
-        address deployer = msg.sender;
         uint256 chainId = block.chainid;
-
-        address aavePoolAddress;
-        address tokenAddress;
-        bool usesMockToken;
-
-        if (chainId == CHAIN_ID_BASE) {
-            aavePoolAddress = AAVE_V3_POOL_BASE;
-            tokenAddress = USDC_BASE;
-            console.log("Using Base mainnet config");
-            console.log("USDC:", tokenAddress);
-            console.log("Aave Pool:", aavePoolAddress);
-        } else if (chainId == CHAIN_ID_ARBITRUM) {
-            aavePoolAddress = AAVE_V3_POOL_ARBITRUM;
-            tokenAddress = USDC_ARBITRUM;
-            console.log("Using Arbitrum mainnet config");
-            console.log("USDC:", tokenAddress);
-            console.log("Aave Pool:", aavePoolAddress);
-        } else if (chainId == CHAIN_ID_SEPOLIA) {
-            aavePoolAddress = AAVE_V3_POOL_SEPOLIA;
-            usesMockToken = true;
-            console.log("Using real Aave V3 Pool (Sepolia):", aavePoolAddress);
-        } else {
-            usesMockToken = true;
-        }
+        require(chainId == BASE_CHAIN_ID || chainId == ANVIL_CHAIN_ID, "Unsupported deployment chain");
+        uint256 cap = vm.envOr("VAULT_DEPOSIT_CAP", DEFAULT_CANARY_CAP);
+        address token;
+        address pool;
 
         vm.startBroadcast();
-
-        if (chainId != CHAIN_ID_BASE && chainId != CHAIN_ID_ARBITRUM && chainId != CHAIN_ID_SEPOLIA) {
-            MockAavePool mockAavePool = new MockAavePool();
-            aavePoolAddress = address(mockAavePool);
-            console.log("MockAavePool deployed at:", aavePoolAddress);
+        if (chainId == BASE_CHAIN_ID) {
+            token = BASE_USDC;
+            pool = BASE_AAVE_POOL;
+            require(token.code.length > 0 && pool.code.length > 0, "Base dependency has no code");
+        } else {
+            MockERC20 localToken = new MockERC20(1_000_000_000e6);
+            MockAavePool localPool = new MockAavePool();
+            token = address(localToken);
+            pool = address(localPool);
+            localPool.configureReserve(token, address(new MockAToken(token, pool)));
+            console2.log("Local MockERC20:", token);
+            console2.log("Local MockAavePool:", pool);
         }
 
-        MockERC20 mockToken;
-        if (usesMockToken) {
-            mockToken = new MockERC20(1_000_000 * 10 ** 6);
-            tokenAddress = address(mockToken);
-            console.log("MockERC20 deployed at:", tokenAddress);
-        }
-
-        VaultV4 vault = new VaultV4(tokenAddress);
-        console.log("VaultV4 deployed at:", address(vault));
-
-        AaveStrategy aaveStrategy = new AaveStrategy(address(vault), tokenAddress, aavePoolAddress);
-        console.log("AaveStrategy deployed at:", address(aaveStrategy));
-
-        vault.setStrategy(address(aaveStrategy));
-        console.log("Strategy registered in VaultV4");
-
-        if (usesMockToken) {
-            mockToken.mint(deployer, 10_000 * 10 ** 6);
-            console.log("Minted 10,000 mock tokens to deployer");
-        }
-
+        VaultV4 vault = new VaultV4(token);
+        AaveStrategy strategy = new AaveStrategy(address(vault), token, pool);
+        vault.setStrategy(address(strategy));
+        vault.setDepositCap(cap);
+        vault.pause();
         vm.stopBroadcast();
 
-        console.log("");
-        console.log("=== Deployment Summary ===");
-        console.log("Chain ID:", chainId);
-        console.log("Deployer:", deployer);
-        console.log("Underlying token:", tokenAddress);
-        console.log("VaultV4:", address(vault));
-        console.log("AaveStrategy:", address(aaveStrategy));
-        console.log("AavePool:", aavePoolAddress);
-        console.log("Uses mock token:", usesMockToken);
+        console2.log("Chain ID:", chainId);
+        console2.log("VaultV4:", address(vault));
+        console2.log("AaveStrategy:", address(strategy));
+        console2.log("Asset:", token);
+        console2.log("Aave Pool:", pool);
+        console2.log("Deposit cap:", cap);
+        console2.log("Paused: true");
     }
 }

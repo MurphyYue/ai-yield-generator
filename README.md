@@ -43,6 +43,8 @@ The Stage 5 runtime target is Base-only. Arbitrum will be retained only as a pin
 
 The Base fork evidence now deploys a fresh `VaultV4` and `AaveStrategy` at pinned block `51,246,242` on chain `8453`. It validates the live Base USDC reserve, Aave pool, and aUSDC bindings, then runs deposit, invest, divest, and redeem against the fork. Arbitrum remains deferred because it is not a Stage 5 runtime or deployment target.
 
+The deployment script now accepts only Base (`8453`) for live configuration and Anvil (`31337`) for local simulation. It configures a 50-USDC default canary cap and pauses the vault before stopping the broadcast. `VerifyDeployment.s.sol` performs read-only post-deployment checks for code, bindings, roles, cap, and pause state.
+
 ## Lean VaultV4
 
 Stage 5 keeps:
